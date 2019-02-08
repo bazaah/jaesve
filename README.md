@@ -1,6 +1,6 @@
 # Jaesve
 
-A CLI utility for converting JSON objects to a series of CSV values, from stdin and/or file(s) to stdout or a file.
+A CLI utility written in pure Rust for converting JSON objects to a series of CSV values, from stdin and/or file(s) to stdout or a file.
 
 ## Installation
 
@@ -28,7 +28,7 @@ Jaesve comes with a CLI, courtesy of clap.rs. You can type `-h` or `--help` to g
 
 ### Example Usage
 
-For a simple example lets use the following JSON:
+For a simple example, let's use the following JSON:
 
 ```json
 //sample.json
@@ -87,17 +87,17 @@ Typing `cargo run --release -- -i sample.json` will output:
 
 Why are some entries like 'phone number' or 'gradient' empty? Because they are not endpoints, they could contain other k:v pairs.
 
-For a another example, lets say that you are only interested in finding numbers, and you want to read from stdin. After some thought you type: `cat some/path/sample.json | cargo run --release -- -xt | grep Number` which outputs:
+For another example, let's say that you're only interested in finding numbers, and you want to read from stdin. After some thought you type: `cat some/path/sample.json | cargo run --release -- -xt | grep Number` which outputs:
 
 ```bash
 "/a number", Number, 42
 ```
 
-What happened here? `cat` sent to jaesve's stdin which was enabled by `-x` and because we were only looking for JSON numbers (not numbers inside strings) we need to get the `-t`ypes after which we send it off to `grep` which filter out everything that is not a `Number`.
+What happened here? `cat` sent to jaesve's stdin which was enabled by `-x` and because we were only looking for JSON numbers (not numbers inside strings) we need to get the `-t`ypes after which we send it off to `grep` to filter out everything that is not a `Number`.
 
 ### Errors
 
-Jaesve prints any errors to stderr if `-v` is set (with escalating information on `-vv` or `-vvv`), otherwise it will fail silently to avoid messing with pipe and handles.
+Jaesve prints any errors to stderr if `-v` is set (with escalating information on `-vv` or `-vvv`), otherwise it will fail silently to avoid messing with pipes and handles.
 
 It will error for the following conditions:
 
