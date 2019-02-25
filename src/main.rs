@@ -75,7 +75,8 @@ fn main() {
     // If input is omitted completely will read from stdin
     match matches.values_of("input") {
         Some(files) => {
-            let file_list: Vec<_> = files.collect();
+            let mut file_list: Vec<_> = files.collect();
+            file_list.dedup_by_key(|f| *f == "-");
             for file in file_list {
                 let input = get_reader(Some(file));
                 if input.is_ok() {
