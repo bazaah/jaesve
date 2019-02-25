@@ -16,15 +16,14 @@ Jaesve comes with a CLI, courtesy of clap.rs. You can type `-h` or `--help` to g
 
 - `-h` `--help` Brings up the cli
 - `-V` `--version` Displays version information
-- `-x` `--stdin` Set to read from stdin
-- `-t` `--type` Display the type of each JSON value
+- `-t` `--type` Don't display the type of each JSON value
 - `-v` Verbosity of debug information (max: 3)
 
 #### Options
 
 - `-i` `--input` Set input file(s) to be read from (NOTE: Files are processed in the order you enter them)
 - `-o` `--output` Set output file to write (NOTE: Jaesve defaults to stdout)
-- `-s` Sets the separator: either a comma space (", ") or a tab ("ACSII: \09")
+- `-s` Sets the separator: either a comma (","), comma-space (", ") or a tab ("ACSII: \09")
 
 ### Example Usage
 
@@ -56,7 +55,7 @@ For a simple example, let's use the following JSON:
 }
 ```
 
-Typing `cargo run --release -- -i sample.json` will output:
+Typing `cargo run --release -- -ti sample.json` will output:
 
 ```bash
 "/phone number", ""
@@ -85,15 +84,15 @@ Typing `cargo run --release -- -i sample.json` will output:
 "/gradient/blues/2", "#0000f2"
 ```
 
-Why are some entries like 'phone number' or 'gradient' empty? Because they are not endpoints, they could contain other k:v pairs.
+Why are some entries like 'phone number' or 'gradient' empty? Because they are not endpoints, they could contain other k:v pairs. Note that by default jaesve will include type information, which we removed with `-t`.
 
-For another example, let's say that you're only interested in finding numbers, and you want to read from stdin. After some thought you type: `cat some/path/sample.json | cargo run --release -- -xt | grep Number` which outputs:
+For another example, let's say that you're only interested in finding numbers, and you want to read from stdin. After some thought you type: `cat some/path/sample.json | cargo run --release | grep Number` which outputs:
 
 ```bash
 "/a number", Number, 42
 ```
 
-What happened here? `cat` sent to jaesve's stdin which was enabled by `-x` and because we were only looking for JSON numbers (not numbers inside strings) we need to get the `-t`ypes after which we send it off to `grep` to filter out everything that is not a `Number`.
+What happened here? `cat` sent to jaesve's stdin which was auto detected due to no `-i` and because we were only looking for JSON numbers (not numbers inside strings) we send it off to `grep` to filter out everything that is not a `Number`.
 
 ### Errors
 
