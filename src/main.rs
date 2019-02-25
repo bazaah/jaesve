@@ -1,10 +1,7 @@
-use crate::models::{formated_error, get_writer, to_csv, Options};
+use crate::models::{formated_error, get_reader, get_writer, to_csv, Options};
 use clap::{crate_authors, crate_version, App, Arg};
 use serde_json::json;
-use std::{
-    fs::File,
-    io::{self, BufWriter, Write},
-};
+use std::io::{self, BufWriter, Write};
 
 mod models;
 
@@ -20,12 +17,6 @@ fn main() {
             .takes_value(false)
             .help("Sets level of debug output")
         )
-        .arg(Arg::with_name("stdin")
-            .short("x")
-            .long("stdin")
-            .takes_value(false)
-            .help("Turns on stdin reading")
-        )
         .arg(
             Arg::with_name("separator")
                 .short("s")
@@ -37,7 +28,7 @@ fn main() {
         .arg(Arg::with_name("type")
             .short("t")
             .long("type")
-            .help("Print json object type")
+            .help("Print without json object type")
         )
         .arg(
             Arg::with_name("input")
@@ -46,8 +37,8 @@ fn main() {
                 .value_name("FILE")
                 .takes_value(true)
                 .multiple(true)
-                .help("Input an arbitrary number of file path(s)")
-                .long_help("Input an arbitrary number of file path(s), separated by a space \ni.e: -i path1 ./path2 ~/path3")
+                .help("Input an arbitrary number of file path(s), with a '-' representing stdin")
+                .long_help("Input an arbitrary number of file path(s), separated by a space \ni.e: -i path1 - ~/path3")
         )
         .arg(
             Arg::with_name("output")
@@ -59,9 +50,9 @@ fn main() {
         )
         .get_matches();
 
-    let show_type = matches.is_present("type");
+    let show_type = !matches.is_present("type");
     let separator = match matches.value_of("separator") {
-        Some("c") => ", ",
+        Some("c") => ",",
         Some("t") => "\t",
         _ => panic!("Separator missing"),
     };
@@ -79,42 +70,44 @@ fn main() {
     // Set up the writer: either to stdout or a file
     let mut writer = BufWriter::new(get_writer(matches.value_of("output"), &options));
 
-    // Processes stdin if the stdin flag is set
-    if matches.is_present("stdin") {
-        let input = io::stdin();
-        let status = match to_csv(&options, input, writer.by_ref()) {
-            Ok(res) => res,
-            Err(e) => json!({ "Error(s) encountered": formated_error(&e) }),
-        };
-        if *options.get_debug_level() >= 2 {
-            eprintln!("\n--- Finished stdin with status: {} ---\n==>", &status)
-        }
-    }
-
     // Processes any files in the order they were inputted to the CLI, skipping on a failed open
-    if let Some(files) = matches.values_of("input") {
-        let file_list: Vec<_> = files.collect();
-        for file in file_list {
-            let input = File::open(file);
-            if input.is_ok() {
-                let status = match to_csv(&options, input.unwrap(), writer.by_ref()) {
-                    Ok(res) => res,
-                    Err(e) => json!({ "Error(s) encountered": formated_error(&e) }),
-                };
-                if *options.get_debug_level() >= 2 {
-                    eprintln!(
-                        "\n--- Finished file: {}, with status: {} ---\n==>",
-                        file, status
-                    );
+    // If a "-" is set as an input option will read from stdin
+    // If input is omitted completely will read from stdin
+    match matches.values_of("input") {
+        Some(files) => {
+            let file_list: Vec<_> = files.collect();
+            for file in file_list {
+                let input = get_reader(Some(file));
+                if input.is_ok() {
+                    let status = match to_csv(&options, input.unwrap(), writer.by_ref()) {
+                        Ok(res) => res,
+                        Err(e) => json!({ "Error(s) encountered": formated_error(&e) }),
+                    };
+                    if *options.get_debug_level() >= 2 {
+                        eprintln!(
+                            "\n--- Finished input: {}, with status: {} ---\n==>",
+                            file, status
+                        );
+                    }
+                } else {
+                    if *options.get_debug_level() >= 1 {
+                        eprintln!(
+                            "\n--- Error: {} could not be opened, skipping... ---\n",
+                            file
+                        )
+                    }
+                    continue;
                 }
-            } else {
-                if *options.get_debug_level() >= 1 {
-                    eprintln!(
-                        "\n--- Error: {} could not be opened, skipping... ---\n",
-                        file
-                    )
-                }
-                continue;
+            }
+        }
+        None => {
+            let input = io::stdin();
+            let status = match to_csv(&options, input, writer.by_ref()) {
+                Ok(res) => res,
+                Err(e) => json!({ "Error(s) encountered": formated_error(&e) }),
+            };
+            if *options.get_debug_level() >= 2 {
+                eprintln!("\n--- Finished stdin with status: {} ---\n==>", &status)
             }
         }
     }
