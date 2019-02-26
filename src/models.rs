@@ -72,8 +72,8 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
         Some(jObject(_)) => jString("".to_string()),
         Some(jArray(_)) => jString("".to_string()),
         Some(jString(s)) => jString(s.to_string()),
-        Some(jNumber(n)) => jNumber(n.clone()),
-        Some(jBool(b)) => jBool(*b),
+        Some(jNumber(n)) => jString(n.to_string()),
+        Some(jBool(b)) => jString(b.to_string()),
         Some(jNull) => jString("NULL".to_string()),
         None => jString("NO_VALUE".to_string()),
     };
@@ -92,7 +92,7 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
             None => "NO_TYPE",
         };
         let fmt = format!(
-            "\"{}\"{}{}{}{}",
+            "\"{}\"{}\"{}\"{}{}",
             entry, separator, type_of, separator, value
         );
         formated_output.push_str(&fmt);
