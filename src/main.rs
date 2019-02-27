@@ -1,4 +1,4 @@
-use crate::models::{formated_error, get_reader, get_writer, to_csv, Options};
+use crate::models::{formated_error, get_reader, get_writer, to_csv, Options, ReadFrom};
 use clap::{crate_authors, crate_version, App, Arg};
 use serde_json::json;
 use std::io::{self, BufWriter, Write};
@@ -30,6 +30,11 @@ fn main() {
             .long("type")
             .help("Print without json object type")
         )
+        .arg(Arg::with_name("line")
+            .short("l")
+            .long("line")
+            .help("Set stdin to read a JSON string from each line")
+        )
         .arg(
             Arg::with_name("input")
                 .short("i")
@@ -50,6 +55,7 @@ fn main() {
         )
         .get_matches();
 
+    let by_line = matches.is_present("line");
     let show_type = !matches.is_present("type");
     let separator = match matches.value_of("separator") {
         Some("c") => ",",
@@ -66,7 +72,7 @@ fn main() {
     };
 
     // Place CLI options into a central location
-    let options = Options::new(show_type, separator.to_owned(), debug_level);
+    let options = Options::new(show_type, separator.to_owned(), debug_level, by_line);
 
     // Set up the writer: either to stdout or a file
     let mut writer = BufWriter::new(get_writer(matches.value_of("output"), &options));
@@ -103,7 +109,7 @@ fn main() {
             }
         }
         None => {
-            let input = io::stdin();
+            let input = ReadFrom::Stdin(io::stdin());
             let status = match to_csv(&options, input, writer.by_ref()) {
                 Ok(res) => res,
                 Err(e) => json!({ "Error(s) encountered": formated_error(&e) }),
