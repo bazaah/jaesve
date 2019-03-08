@@ -1,5 +1,6 @@
 use crate::models::{formated_error, get_reader, get_writer, to_csv, Options, ReadFrom};
 use clap::{crate_authors, crate_version, App, Arg};
+use regex::Regex;
 use serde_json::json;
 use std::io::{self, BufWriter, Write};
 
@@ -34,6 +35,12 @@ fn main() {
             .long("line")
             .help("Set stdin to read a JSON string from each line")
         )
+        .arg(Arg::with_name("regex")
+            .short("x")
+            .long("regex")
+            .takes_value(true)
+            .help("Set a regex to filter output")
+        )
         .arg(
             Arg::with_name("input")
                 .short("i")
@@ -54,6 +61,10 @@ fn main() {
         )
         .get_matches();
 
+    let regex = match matches.value_of("regex") {
+        Some(r) => Some(Regex::new(r).unwrap()),
+        None => None,
+    };
     let by_line = matches.is_present("line");
     let show_type = !matches.is_present("type");
     let separator = match matches.value_of("separator") {
@@ -72,7 +83,7 @@ fn main() {
     };
 
     // Place CLI options into a central location
-    let options = Options::new(show_type, separator.to_owned(), debug_level, by_line);
+    let options = Options::new(show_type, separator.to_owned(), debug_level, by_line, regex);
 
     // Set up the writer: either to stdout or a file
     let mut writer = BufWriter::new(get_writer(matches.value_of("output"), &options));

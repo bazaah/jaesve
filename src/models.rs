@@ -92,13 +92,13 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
     let separator = options.get_separator();
     let show_type = options.type_status();
     let value = match val {
-        Some(jObject(_)) => jString("".to_string()),
-        Some(jArray(_)) => jString("".to_string()),
-        Some(jString(s)) => jString(s.to_string()),
-        Some(jNumber(n)) => jString(n.to_string()),
-        Some(jBool(b)) => jString(b.to_string()),
-        Some(jNull) => jString("NULL".to_string()),
-        None => jString("NO_VALUE".to_string()),
+        Some(jObject(_)) => "".to_string(),
+        Some(jArray(_)) => "".to_string(),
+        Some(jString(s)) => s.to_string(),
+        Some(jNumber(n)) => n.to_string(),
+        Some(jBool(b)) => b.to_string(),
+        Some(jNull) => "NULL".to_string(),
+        None => "NO_VALUE".to_string(),
     };
     let mut formated_output = String::new();
 
@@ -123,9 +123,18 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
         let fmt = format!("\"{}\"{}{}", entry, separator, value);
         formated_output.push_str(&fmt);
     }
-    writeln!(output.by_ref(), "{}", formated_output.as_str())
-        .map_err(|e| eprintln!("An error occurred while writing: {}", e))
-        .unwrap_or(())
+    match options.get_regex() {
+        Some(r) => {
+            if r.is_match(value.as_str()) {
+                writeln!(output.by_ref(), "{}", formated_output.as_str())
+                    .map_err(|e| eprintln!("An error occurred while writing: {}", e))
+                    .unwrap_or(())
+            }
+        }
+        None => writeln!(output.by_ref(), "{}", formated_output.as_str())
+            .map_err(|e| eprintln!("An error occurred while writing: {}", e))
+            .unwrap_or(()),
+    }
 }
 
 // Small function for formatting any error (chains) failureResult catches
@@ -152,15 +161,23 @@ pub struct Options {
     separator: String,
     debug_level: i32,
     by_line: bool,
+    regex: Option<regex::Regex>,
 }
 
 impl Options {
-    pub fn new(show_type: bool, separator: String, debug_level: i32, by_line: bool) -> Self {
+    pub fn new(
+        show_type: bool,
+        separator: String,
+        debug_level: i32,
+        by_line: bool,
+        regex: Option<regex::Regex>,
+    ) -> Self {
         Options {
             show_type,
             separator,
             debug_level,
             by_line,
+            regex,
         }
     }
 
@@ -178,6 +195,10 @@ impl Options {
 
     pub fn get_debug_level(&self) -> &i32 {
         &self.debug_level
+    }
+
+    pub fn get_regex(&self) -> &Option<regex::Regex> {
+        &self.regex
     }
 }
 
