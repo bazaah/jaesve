@@ -22,8 +22,7 @@ fn main() {
                 .short("s")
                 .takes_value(true)
                 .default_value("c")
-                .possible_values(&["c", "cs", "t"])
-                .help("c => ',' cs => ', ' t => tab"),
+                .help("c => ',' cs => ', ' t => tab, _ => _"),
         )
         .arg(Arg::with_name("type")
             .short("t")
@@ -61,6 +60,7 @@ fn main() {
         Some("c") => ",",
         Some("t") => "\t",
         Some("cs") => ", ",
+        Some(s) => s,
         _ => panic!("Separator missing"),
     };
     let debug_level = match matches.occurrences_of("verbosity") {
