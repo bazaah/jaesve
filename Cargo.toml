@@ -1,6 +1,6 @@
 [package]
 name = "jaesve"
-version = "0.6.3"
+version = "0.7.0"
 authors = ["Baz <github(a)luxolus.com>"]
 edition = "2018"
 
