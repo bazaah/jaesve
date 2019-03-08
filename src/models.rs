@@ -9,7 +9,7 @@ use serde_json::{
 use std::{
     collections::VecDeque,
     fs::File,
-    io::{Read, Write},
+    io::{BufRead, Read, Write},
     result,
 };
 
@@ -38,26 +38,49 @@ pub fn get_writer(w: Option<&str>, options: &Options) -> Box<Write> {
 }
 
 // Either opens from a file or stdin if the "filename" is "-"
-pub fn get_reader(r: Option<&str>) -> Result<Box<Read>, String> {
+pub fn get_reader(r: Option<&str>) -> Result<ReadFrom, String> {
     match r {
-        Some("-") => Ok(Box::new(std::io::stdin())),
+        Some("-") => Ok(ReadFrom::Stdin(std::io::stdin())),
         Some(file_name) => match File::open(file_name).ok() {
-            Some(file) => Ok(Box::new(file)),
+            Some(file) => Ok(ReadFrom::File(file)),
             None => Err(format!("Can't open file: {}", &file_name)),
         },
-        None => Ok(Box::new(std::io::stdin())),
+        None => Ok(ReadFrom::Stdin(std::io::stdin())),
     }
 }
 
 // Puts all the pieces together
-pub fn to_csv<R: Read, W: Write>(
+pub fn to_csv<W: Write>(
     options: &Options,
-    input: R,
-    output: W,
+    input: ReadFrom,
+    mut output: W,
 ) -> FailureResult<JsonValue> {
-    let data: JsonValue = serde_json::from_reader(input)?;
-    let packet = JsonPacket::new(data);
-    packet.print(options, output);
+    match input {
+        ReadFrom::File(f) => {
+            let data: JsonValue = serde_json::from_reader(f)?;
+            let packet = JsonPacket::new(data);
+            packet.print(options, &mut output);
+        }
+        ReadFrom::Stdin(s) => {
+            if *options.single_line_object() {
+                s.lock()
+                    .lines()
+                    .filter_map(|r| r.ok())
+                    .filter_map(|line| {
+                        let data = serde_json::from_str(line.as_str());
+                        data.ok()
+                    })
+                    .for_each(|value: JsonValue| {
+                        let packet = JsonPacket::new(value);
+                        packet.print(options, &mut output);
+                    })
+            } else {
+                let data: JsonValue = serde_json::from_reader(s)?;
+                let packet = JsonPacket::new(data);
+                packet.print(options, &mut output);
+            }
+        }
+    }
 
     Ok(json!(0))
 }
@@ -117,20 +140,27 @@ pub fn formated_error(err: &::failure::Error) -> String {
     format
 }
 
+pub enum ReadFrom {
+    File(std::fs::File),
+    Stdin(std::io::Stdin),
+}
+
 // Struct for holding the options that affect program logic
 // Only passes out references
 pub struct Options {
     show_type: bool,
     separator: String,
     debug_level: i32,
+    by_line: bool,
 }
 
 impl Options {
-    pub fn new(show_type: bool, separator: String, debug_level: i32) -> Self {
+    pub fn new(show_type: bool, separator: String, debug_level: i32, by_line: bool) -> Self {
         Options {
             show_type,
             separator,
             debug_level,
+            by_line,
         }
     }
 
@@ -140,6 +170,10 @@ impl Options {
 
     pub fn type_status(&self) -> &bool {
         &self.show_type
+    }
+
+    pub fn single_line_object(&self) -> &bool {
+        &self.by_line
     }
 
     pub fn get_debug_level(&self) -> &i32 {
@@ -161,7 +195,7 @@ impl JsonPacket {
     }
 
     // Convenience function around write that allows for clearer flow
-    pub fn print<W: Write>(&self, options: &Options, mut output: W) {
+    pub fn print<W: Write>(&self, options: &Options, output: &mut W) {
         for entry in &self.plist {
             let data = self.object.pointer(&entry);
             write(options, output.by_ref(), entry, data);
