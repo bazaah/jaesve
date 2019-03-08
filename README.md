@@ -10,7 +10,7 @@ A CLI utility written in pure Rust for converting JSON objects to a series of CS
 
 ### CLI
 
-Jaesve comes with a CLI, courtesy of clap.rs. You can type `-h` or `--help` to get it.
+Jaesve comes with a CLI, courtesy of clap.rs. You can type `-h` or `--help` to see the available settings.
 
 #### Flags
 
@@ -23,7 +23,14 @@ Jaesve comes with a CLI, courtesy of clap.rs. You can type `-h` or `--help` to g
 
 - `-i` `--input` Set input file(s) to be read from (NOTE: Files are processed in the order you enter them)
 - `-o` `--output` Set output file to write (NOTE: Jaesve defaults to stdout)
-- `-s` Sets the separator: either a comma (","), comma-space (", ") or a tab ("ACSII: \09")
+- `-s` Sets the separator: either a comma (","), comma-space (", ") or a tab ("ACSII: \09"), or an arbitrary, user designated separator
+
+#### Experimental
+
+These features are currently undergoing testing and should be used with care.
+
+- `-l` `--line` Sets stdin to read one JSON object per line
+- `-x` `--regex` Set a regex for filtering output
 
 ### Example Usage
 
