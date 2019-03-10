@@ -116,12 +116,12 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
             None => "NO_TYPE",
         };
         let fmt = format!(
-            "\"{}\"{}\"{}\"{}{}",
+            "\"{}\"{}\"{}\"{}\"{}\"",
             entry, separator, type_of, separator, value
         );
         formated_output.push_str(&fmt);
     } else {
-        let fmt = format!("\"{}\"{}{}", entry, separator, value);
+        let fmt = format!("\"{}\"{}\"{}\"", entry, separator, value);
         formated_output.push_str(&fmt);
     }
     match regex_opts.get_regex() {
