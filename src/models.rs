@@ -89,6 +89,7 @@ pub fn to_csv<W: Write>(
 // The work-horse of the rebel fleet
 // If something goes wrong, writes the error to stderr and moves on
 fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&JsonValue>) {
+    let regex_opts = options.get_regex_opts();
     let separator = options.get_separator();
     let show_type = options.type_status();
     let value = match val {
@@ -115,17 +116,37 @@ fn write<W: Write>(options: &Options, mut output: W, entry: &str, val: Option<&J
             None => "NO_TYPE",
         };
         let fmt = format!(
-            "\"{}\"{}\"{}\"{}{}",
+            "\"{}\"{}\"{}\"{}\"{}\"",
             entry, separator, type_of, separator, value
         );
         formated_output.push_str(&fmt);
     } else {
-        let fmt = format!("\"{}\"{}{}", entry, separator, value);
+        let fmt = format!("\"{}\"{}\"{}\"", entry, separator, value);
         formated_output.push_str(&fmt);
     }
-    match options.get_regex() {
+    match regex_opts.get_regex() {
         Some(r) => {
-            if r.is_match(value.as_str()) {
+            let column = match regex_opts.get_column() {
+                Some(RegexOn::Entry) => entry,
+                Some(RegexOn::Value) => value.as_str(),
+                Some(RegexOn::Type) => {
+                    match val {
+                        Some(val) => match val {
+                            jObject(_) => "Map",
+                            jArray(_) => "Array",
+                            jString(_) => "String",
+                            jNumber(_) => "Number",
+                            jBool(_) => "Bool",
+                            jNull => "Null",
+                        },
+                        None => "NO_TYPE",
+                    }
+                }
+                Some(RegexOn::Separator) => separator,
+                None => panic!("Error: Need a column to regex match on"),
+            };
+
+            if r.is_match(column) {
                 writeln!(output.by_ref(), "{}", formated_output.as_str())
                     .map_err(|e| eprintln!("An error occurred while writing: {}", e))
                     .unwrap_or(())
@@ -154,6 +175,32 @@ pub enum ReadFrom {
     Stdin(std::io::Stdin),
 }
 
+pub enum RegexOn {
+    Entry,
+    Value,
+    Type,
+    Separator,
+}
+
+pub struct RegexOptions {
+    regex: Option<regex::Regex>,
+    column: Option<RegexOn>,
+}
+
+impl RegexOptions {
+    pub fn new(regex: Option<regex::Regex>, column: Option<RegexOn>) -> Self {
+        RegexOptions { regex, column }
+    }
+
+    pub fn get_regex(&self) -> &Option<regex::Regex> {
+        &self.regex
+    }
+
+    pub fn get_column(&self) -> &Option<RegexOn> {
+        &self.column
+    }
+}
+
 // Struct for holding the options that affect program logic
 // Only passes out references
 pub struct Options {
@@ -161,7 +208,7 @@ pub struct Options {
     separator: String,
     debug_level: i32,
     by_line: bool,
-    regex: Option<regex::Regex>,
+    regex: RegexOptions,
 }
 
 impl Options {
@@ -170,8 +217,10 @@ impl Options {
         separator: String,
         debug_level: i32,
         by_line: bool,
-        regex: Option<regex::Regex>,
+        regex_opts: (Option<regex::Regex>, Option<RegexOn>),
     ) -> Self {
+        let regex = RegexOptions::new(regex_opts.0, regex_opts.1);
+
         Options {
             show_type,
             separator,
@@ -197,7 +246,7 @@ impl Options {
         &self.debug_level
     }
 
-    pub fn get_regex(&self) -> &Option<regex::Regex> {
+    pub fn get_regex_opts(&self) -> &RegexOptions {
         &self.regex
     }
 }
