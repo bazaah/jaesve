@@ -1,4 +1,5 @@
 use {
+    crate::models::error::{ErrorKind, Result},
     serde_json::{
         Value as JsonValue,
         Value::{
@@ -6,10 +7,15 @@ use {
             String as jString,
         },
     },
-    std::{collections::VecDeque, io::Write as ioWrite, path::PathBuf, str::FromStr},
+    std::{
+        collections::VecDeque,
+        io::{Result as ioResult, Write as ioWrite},
+        path::PathBuf,
+        str::FromStr,
+    },
 };
 
-// Convenience macro for logging match arms
+/// Convenience macro for logging match arms
 #[macro_export]
 macro_rules! match_with_log {
     ( $val:expr, $log:expr) => {{
@@ -18,14 +24,14 @@ macro_rules! match_with_log {
     }};
 }
 
-// Supported read source options
+/// Supported read source options
 #[derive(Debug)]
 pub enum ReadFrom {
     File(PathBuf),
     Stdin,
 }
 
-// Displays either 'Stdin' or a file, if file contains non ASCII
+// Displays either 'Stdin' or a file name, if file name contains non ASCII
 // characters, they are replaced with � (U+FFFD)
 impl std::fmt::Display for ReadFrom {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -39,6 +45,13 @@ impl std::fmt::Display for ReadFrom {
 
         write!(f, "{}", display)
     }
+}
+
+pub struct OutputBlocks {
+    entry: String,
+    value: String,
+    delimiter: String,
+    type_of: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -74,6 +87,7 @@ pub struct RegexOptions {
 
 impl RegexOptions {
     pub fn new(pattern: &str, column: RegexOn) -> Self {
+        // Checked by clap, unwrap here is safe
         let regex = regex::Regex::from_str(pattern).unwrap();
         RegexOptions { regex, column }
     }
@@ -85,6 +99,97 @@ impl RegexOptions {
     pub fn get_column(&self) -> &RegexOn {
         &self.column
     }
+}
+
+pub struct JsonScan<I> {
+    iter: I,
+    prev: Option<u8>,
+    state: ScanState,
+    /// (InQuotes, OutQuotes)
+    offsets: (usize, usize),
+}
+
+impl<I> JsonScan<I>
+where
+    I: Iterator<Item = ioResult<u8>>,
+{
+    pub fn new(iter: I) -> JsonScan<I> {
+        JsonScan {
+            iter,
+            prev: None,
+            state: ScanState::OutQuotes,
+            offsets: (0, 0),
+        }
+    }
+
+    pub fn outside_quotes(&self) -> bool {
+        match self.state {
+            ScanState::OutQuotes => true,
+            ScanState::InQuotes => false,
+        }
+    }
+
+    pub fn offsets(&self) -> (usize, usize) {
+        self.offsets
+    }
+
+    fn handle_state(&mut self) {
+        match self.prev {
+            Some(b'\\') => (),
+            _ => match self.state {
+                ScanState::InQuotes => {
+                    self.offsets.1 = 0; // Reset OutQuotes counter
+                    self.state = ScanState::OutQuotes
+                }
+                ScanState::OutQuotes => {
+                    self.offsets.0 = 0; // Reset InQuotes counter
+                    self.state = ScanState::InQuotes
+                }
+            },
+        }
+    }
+
+    fn increment_offset(&mut self) {
+        match self.state {
+            ScanState::InQuotes => self.offsets.0 += 1,
+            ScanState::OutQuotes => self.offsets.1 += 1,
+        }
+    }
+}
+
+impl<I> Iterator for JsonScan<I>
+where
+    I: Iterator<Item = ioResult<u8>>,
+{
+    type Item = ioResult<u8>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.iter.next() {
+            Some(Ok(b @ b'"')) => {
+                self.handle_state();
+                //self.offset(); Should starting a new offset be 0 or 1?
+                self.prev = Some(b);
+                Some(Ok(b))
+            }
+            Some(Ok(b)) => {
+                self.increment_offset();
+                self.prev = Some(b);
+                Some(Ok(b))
+            }
+            Some(Err(e)) => {
+                self.increment_offset();
+                self.prev = None;
+                Some(Err(e))
+            }
+            None => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ScanState {
+    InQuotes,
+    OutQuotes,
 }
 
 // Struct for creating and holding a list of json pointers
