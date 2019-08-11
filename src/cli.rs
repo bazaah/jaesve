@@ -184,4 +184,12 @@ impl<'a> ProgramArgs {
     pub fn debug_level(&self) -> LevelFilter {
         self.debug_level
     }
+
+    pub fn reader_list(&self) -> &Vec<Option<ReadFrom>> {
+        &self.reader
+    }
+
+    pub fn writer(&self) -> &(Option<String>, bool) {
+        &self.writer
+    }
 }
