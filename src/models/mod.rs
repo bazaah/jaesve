@@ -1,15 +1,27 @@
 use {
-    crate::{match_with_log, models::assets::ReadFrom},
+    crate::{
+        cli::ProgramArgs,
+        match_with_log,
+        models::{
+            assets::{JsonScan, ReadFrom},
+            error::{ErrorKind, Result},
+        },
+    },
     std::{
         fs::{File, OpenOptions},
-        io::{stdin as cin, stdout as cout, BufRead, Read as ioRead, Write as ioWrite},
+        io::{
+            stdin as cin, stdout as cout, BufReader, Read as ioRead, Result as ioResult,
+            Write as ioWrite,
+        },
         path::PathBuf,
+        sync::mpsc::SyncSender,
     },
 };
 
 pub mod assets;
+pub mod error;
 
-// Determines write destination from runtime args
+/// Determines write destination from runtime args
 // w: (_, bool), true => append, false => create
 pub fn get_writer(w: &(Option<String>, bool)) -> Box<dyn ioWrite> {
     match w {
@@ -37,7 +49,7 @@ pub fn get_writer(w: &(Option<String>, bool)) -> Box<dyn ioWrite> {
     }
 }
 
-// Helper function for generating a list of read sources at runtime
+/// Helper function for generating a list of read sources at runtime
 pub fn get_reader(r: Option<&str>) -> Option<ReadFrom> {
     match r {
         Some("-") => Some(ReadFrom::Stdin),
@@ -53,7 +65,7 @@ pub fn get_reader(r: Option<&str>) -> Option<ReadFrom> {
     }
 }
 
-// Opens a read source, defaults to stdin if source errors
+/// Opens a read source, defaults to stdin if source errors
 pub fn set_reader(src: &Option<ReadFrom>) -> Box<dyn ioRead + Send> {
     match src {
         Some(s) => match s {
@@ -74,6 +86,101 @@ pub fn set_reader(src: &Option<ReadFrom>) -> Box<dyn ioRead + Send> {
             info!("No input source found, defaulting to stdin...")
         ),
     }
+}
+
+/// Recursively unwinds a JSON data stream
+/// sending the pieces to a builder thread
+// This function does not check if the stream is valid JSON,
+// if it isn't the deserializer will catch it,
+// but the error it emits might be cryptic depending on
+// how badly this function mangled it
+pub(crate) fn unwind_json<I>(
+    opts: &ProgramArgs,
+    scanner: &mut JsonScan<I>,
+    tx_builder: SyncSender<(Option<Vec<u8>>, Vec<u8>)>,
+    prefix_byte: Option<u8>,
+    name_slice: Option<Vec<u8>>,
+) -> Result<()>
+where
+    I: Iterator<Item = ioResult<u8>>,
+{
+    debug!("Started parsing a JSON object/array");
+    // Handle the '{' or '[' byte that the outside function might have
+    let mut buffer: Vec<u8> = match prefix_byte {
+        Some(b) => vec![b],
+        None => Vec::new(),
+    };
+    trace!("BEFORE: ({:?}, {:?})", &name_slice, &buffer);
+    loop {
+        match scanner.next() {
+            Some(Ok(b @ b'[')) if scanner.outside_quotes() => {
+                unwind_json(
+                    opts,
+                    scanner,
+                    tx_builder.clone(),
+                    Some(b),
+                    get_matching_key(&buffer, scanner.offsets()),
+                )?;
+                &mut buffer.push(b);
+                // Recursive call above eats the corresponding ']' replace it, creating an empty array
+                &mut buffer.push(b']');
+                continue;
+            }
+            Some(Ok(b @ b'{')) if scanner.outside_quotes() => {
+                unwind_json(
+                    opts,
+                    scanner,
+                    tx_builder.clone(),
+                    Some(b),
+                    get_matching_key(&buffer, scanner.offsets()),
+                )?;
+                &mut buffer.push(b);
+                // Recursive call above eats the corresponding '}' replace it, creating an empty map
+                &mut buffer.push(b'}');
+                continue;
+            }
+            Some(Ok(b @ b']')) | Some(Ok(b @ b'}')) if scanner.outside_quotes() => {
+                &mut buffer.push(b);
+                break;
+            }
+            Some(Ok(b)) => {
+                &mut buffer.push(b);
+                continue;
+            }
+            Some(Err(e)) => return Err(ErrorKind::Io(e)),
+            None => break,
+        }
+    }
+
+    trace!("AFTER: ({:?}, {:?})", &name_slice, &buffer);
+
+    tx_builder.send((name_slice, buffer)).map_err(|_| {
+        ErrorKind::UnexpectedChannelClose(format!(
+            "builder in |reader -> builder| channel has hung up"
+        ))
+    })?;
+
+    drop(tx_builder);
+    debug!("Finished parsing a JSON object/array");
+    Ok(())
+}
+
+/// Helper function for finding the key
+/// of the JSON object being unwound
+fn get_matching_key(buffer: &Vec<u8>, offsets: (usize, usize)) -> Option<Vec<u8>> {
+    let (in_quotes, out_quotes) = offsets;
+    let key: Vec<_> = buffer
+        .iter()
+        .rev()
+        .skip(out_quotes)
+        .take(in_quotes)
+        .copied()
+        .collect();
+    key.reverse();
+
+    trace!("KEY: {:?}", &key);
+
+    Some(key)
 }
 
 /*
