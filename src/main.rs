@@ -7,9 +7,17 @@ extern crate lazy_static;
 use {
     crate::{
         cli::{generate_cli, ProgramArgs},
-        models::error::{ErrorKind, ProgramExit},
+        models::{
+            error::{ErrorKind, ProgramExit},
+            set_reader,
+        },
+        threads::spawn_workers,
     },
     simplelog::*,
+    std::{
+        io::Read as ioRead,
+        sync::mpsc::{sync_channel as syncQueue, Receiver, SyncSender},
+    },
 };
 
 mod cli;
@@ -27,6 +35,26 @@ fn main() -> ProgramExit<ErrorKind> {
     info!("CLI options loaded and logger started");
     // End of Pre-program block
 
+    // Channel for sending open input streams (stdin/file handles)
+    // number controls how many shall be open at any given time,
+    // counting from 0 (i.e: 0 -> 1, 1 -> 2, etc)
+    let (tx, rx): (
+        SyncSender<Box<dyn ioRead + Send>>,
+        Receiver<Box<dyn ioRead + Send>>,
+    ) = syncQueue(1);
+
+    // Instantiates worker threads
+    let reader = spawn_workers(&CLI, rx)?;
+
+    // Hot loop
+    for source in CLI.reader_list() {
+        let read_from: Box<dyn ioRead + Send> = set_reader(source);
+        tx.send(read_from).map_err(|_| {
+            ErrorKind::UnexpectedChannelClose(format!(
+                "reader in |main -> reader| channel has hung up"
+            ))
+        })?;
+    }
     // Return 0
     ProgramExit::Success
 }
