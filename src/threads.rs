@@ -4,15 +4,16 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            error::ErrorKind,
-            unwind_json,
-            get_writer,
-            assets::JsonScan,
+            assets::{JsonPacket, JsonPointer, JsonScan},
+            error::{ErrorKind, Result},
+            get_writer, unwind_json,
         },
     },
     serde::{ser::SerializeSeq, Serializer},
+    serde_json::{from_slice, value::Value as JsonValue},
     std::{
-        io::{BufWriter, Read as ioRead, BufReader},
+        convert::TryFrom,
+        io::{BufReader, BufWriter, Read as ioRead, Write as ioWrite},
         sync::mpsc::{sync_channel as syncQueue, Receiver, SyncSender},
         thread::{Builder as thBuilder, JoinHandle},
     },
@@ -25,140 +26,98 @@ use {
 pub(crate) fn spawn_workers(
     opts: &'static ProgramArgs,
     from_source: Receiver<Box<dyn ioRead + Send>>,
-) -> Result<JoinHandle<Result<(), ErrorKind>>, ErrorKind> {
+) -> Result<JoinHandle<Result<()>>> {
     type Parts = (Option<Vec<u8>>, Vec<u8>);
-    type Output = (usize, usize);
+    type Output = String;
 
     // Meta channel: |Reader -> Builder|, delivers new receivers to builder
-    let (ReBu_tx, ReBu_rx): (
-        SyncSender<Receiver<Parts>>,
-        Receiver<Receiver<Parts>>,
-    ) = syncQueue(0);
+    let (ReBu_tx, ReBu_rx): (SyncSender<Receiver<Parts>>, Receiver<Receiver<Parts>>) = syncQueue(0);
     // Meta channel: |Builder -> Writer|, delivers new receivers to writer
     let (BuWr_tx, BuWr_rx): (SyncSender<Receiver<Output>>, Receiver<Receiver<Output>>) =
         syncQueue(0);
 
     // Writer
-    let thWriter =
-        thBuilder::new()
-            .name(format!("Writer"))
-            .spawn(move || -> Result<(), ErrorKind> {
-                debug!("Writer initialized");
-                let rx_builder = BuWr_rx;
-                let opts = &opts;
-                let mut writer = BufWriter::new(get_writer(opts.writer()));
-                info!("Buffered writer initialized");
+    let thWriter = thBuilder::new()
+        .name(format!("Writer"))
+        .spawn(move || -> Result<()> {
+            debug!("Writer initialized");
+            let rx_builder = BuWr_rx;
+            let opts = &opts;
+            let mut writer = BufWriter::new(get_writer(opts.writer()));
+            info!("Buffered writer initialized");
 
-                // Hot loop
-                while let Some(channel) = rx_builder.iter().next() {
-                    let _res: Result<(), ErrorKind> = match opts.output_type() {
-                        OutputFormat::Json => match_with_log!(
-                            {
-                                let mut ser = serde_json::Serializer::new(&mut writer);
-                                let mut seq =
-                                    ser.serialize_seq(None).map_err(|e| ErrorKind::from(e))?;
-                                for output in channel.iter() {
-                                    seq.serialize_element(&output)
-                                        .map_err(|e| ErrorKind::from(e))?;
-                                }
-                                seq.end().map_err(|e| ErrorKind::from(e))?;
-                                Ok(())
-                            },
-                            info!("Using Json writer")
-                        ),
-                        OutputFormat::JsonPretty => match_with_log!(
-                            {
-                                let mut ser = serde_json::Serializer::pretty(&mut writer);
-                                let mut seq =
-                                    ser.serialize_seq(None).map_err(|e| ErrorKind::from(e))?;
-                                for output in channel.iter() {
-                                    seq.serialize_element(&output)
-                                        .map_err(|e| ErrorKind::from(e))?;
-                                }
-                                seq.end().map_err(|e| ErrorKind::from(e))?;
-                                Ok(())
-                            },
-                            info!("Using pretty Json writer")
-                        ),
-                        OutputFormat::Yaml => match_with_log!(
-                            {
-                                let all_output: Vec<Output> = channel.iter().collect();
-                                serde_yaml::to_writer(&mut writer, &all_output)
-                                    .map_err(|e| ErrorKind::from(e))?;
-
-                                Ok(())
-                            },
-                            info!("Using Yaml writer")
-                        ),
-                    };
+            // Hot loop
+            while let Some(channel) = rx_builder.iter().next() {
+                for output in channel {
+                    writeln!(&mut writer, "{}, {}", output.0, output.1)?;
                 }
+            }
 
-                // Cleanup
-                debug!("Writer closing");
-                Ok(())
-            })?;
+            // Cleanup
+            debug!("Writer closing");
+            Ok(())
+        })?;
 
     // Builder
-    let thBuilder =
-        thBuilder::new()
-            .name(format!("Builder"))
-            .spawn(move || -> Result<(), ErrorKind> {
-                debug!("Builder initialized");
-                let tx_writer = BuWr_tx;
-                let rx_reader = ReBu_rx;
-                let opts = &opts;
+    let thBuilder = thBuilder::new()
+        .name(format!("Builder"))
+        .spawn(move || -> Result<()> {
+            debug!("Builder initialized");
+            let tx_writer = BuWr_tx;
+            let rx_reader = ReBu_rx;
+            let opts = &opts;
 
-                // Hot loop
-                while let Some(object) = rx_reader.iter().next() {
-                    let (data_tx, data_rx): (SyncSender<Output>, Receiver<Output>) = syncQueue(10);
-                    tx_writer.send(data_rx).map_err(|_| {
+            // Hot loop
+            while let Some(channel) = rx_reader.iter().next() {
+                let (data_tx, data_rx): (SyncSender<Output>, Receiver<Output>) = syncQueue(10);
+                tx_writer.send(data_rx).map_err(|_| {
+                    ErrorKind::UnexpectedChannelClose(format!(
+                        "failed to send next |builder -> writer| channel, writer has hung up"
+                    ))
+                })?;
+
+                for packet in channel {
+                    let builder = JsonPointer::new(JsonPacket::try_from(packet)?);
+
+                    for item in builder {
+                    data_tx.send(item).map_err(|_| {
                         ErrorKind::UnexpectedChannelClose(format!(
-                            "failed to send next |builder -> writer| channel, writer has hung up"
+                            "writer in |builder -> writer| channel has hung up"
                         ))
                     })?;
-                    let res = unimplemented!();
-                    
-                    for item in res {
-                        data_tx.send(item).map_err(|_| {
-                            ErrorKind::UnexpectedChannelClose(format!(
-                                "writer in |builder -> writer| channel has hung up"
-                            ))
-                        })?;
                     }
                 }
+            }
 
-                // Cleanup
-                drop(tx_writer);
-                thWriter.join().map_err(|_| {
-                    ErrorKind::ThreadFailed(format!(
-                        "{}",
-                        std::thread::current().name().unwrap_or("unnamed")
-                    ))
-                })??;
-                debug!("Builder closing");
-                Ok(())
-            });
+            // Cleanup
+            drop(tx_writer);
+            thWriter.join().map_err(|_| {
+                ErrorKind::ThreadFailed(format!(
+                    "{}",
+                    std::thread::current().name().unwrap_or("unnamed")
+                ))
+            })??;
+            debug!("Builder closing");
+            Ok(())
+        });
 
     // Reader
-    let thReader: JoinHandle<Result<(), ErrorKind>> = thBuilder::new()
+    let thReader: JoinHandle<Result<()>> = thBuilder::new()
         .name(format!("Reader"))
-        .spawn(move || -> Result<(), ErrorKind> {
+        .spawn(move || -> Result<()> {
             debug!("Reader initialized");
             let tx_builder = ReBu_tx;
             let opts = &opts;
 
             // Hot loop
             while let Some(src) = from_source.iter().next() {
-                let (data_tx, data_rx): (
-                    SyncSender<Parts>,
-                    Receiver<Parts>,
-                ) = syncQueue(10);
+                let (data_tx, data_rx): (SyncSender<Parts>, Receiver<Parts>) = syncQueue(10);
                 tx_builder.send(data_rx).map_err(|_| {
                     ErrorKind::UnexpectedChannelClose(format!(
                         "failed to send next |reader -> builder| channel, builder has hung up"
                     ))
                 })?;
-                let scanner = JsonScan::new(BufReader::new(src).bytes());
+                let mut scanner = JsonScan::new(BufReader::new(src).bytes());
 
                 unwind_json(&opts, &mut scanner, data_tx, None, None)?;
             }
