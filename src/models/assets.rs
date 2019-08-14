@@ -1,7 +1,7 @@
 use {
     crate::models::error::{ErrorKind, Result},
     serde_json::{
-        Value as JsonValue,
+        from_slice, Value as JsonValue,
         Value::{
             Array as jArray, Bool as jBool, Null as jNull, Number as jNumber, Object as jObject,
             String as jString,
@@ -9,6 +9,7 @@ use {
     },
     std::{
         collections::VecDeque,
+        convert::TryFrom,
         io::{Result as ioResult, Write as ioWrite},
         path::PathBuf,
         str::FromStr,
@@ -47,11 +48,64 @@ impl std::fmt::Display for ReadFrom {
     }
 }
 
-pub struct OutputBlocks {
-    entry: String,
-    value: String,
-    delimiter: String,
-    type_of: Option<String>,
+pub trait Builder {}
+
+pub struct OutputBuilder {
+    blocks: Vec<OutputBlocks>,
+}
+
+impl OutputBuilder {
+    pub fn new() -> Self {
+        Self { blocks: Vec::new() }
+    }
+}
+
+impl Builder for OutputBuilder {}
+
+pub enum OutputBlocks {
+    Ident(usize),
+    Delimiter(char),
+    Type(JType),
+    Pointer(String),
+    Value(String),
+}
+
+#[derive(Debug)]
+pub enum JType {
+    Object,
+    Array,
+    String,
+    Number,
+    Bool,
+    Null,
+}
+
+impl From<JsonValue> for JType {
+    fn from(json: JsonValue) -> Self {
+        match json {
+            jObject(_) => JType::Object,
+            jArray(_) => JType::Array,
+            jString(_) => JType::String,
+            jNumber(_) => JType::Number,
+            jBool(_) => JType::Bool,
+            jNull => JType::Null,
+        }
+    }
+}
+
+impl std::fmt::Display for JType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let kind = match self {
+            JType::Object => "Object",
+            JType::Array => "Array",
+            JType::String => "String",
+            JType::Number => "Number",
+            JType::Bool => "Bool",
+            JType::Null => "Null",
+        };
+
+        write!(f, "{}", kind)
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -192,62 +246,139 @@ enum ScanState {
     OutQuotes,
 }
 
-// Struct for creating and holding a list of json pointers
-// for arbitrary JsonValues
-pub struct JsonPacket {
-    object: JsonValue,
-    plist: Vec<String>,
+pub struct JsonPointer<'j> {
+    item: JsonPacket,
+    queue: VecDeque<(&'j JsonValue, String)>,
+    pbuf: Vec<String>,
 }
 
-impl JsonPacket {
-    pub fn new(object: JsonValue) -> Self {
-        let plist = JsonPacket::parse_json(&object);
-        JsonPacket { object, plist }
+impl<'j> JsonPointer<'j> {
+    pub fn new(item: JsonPacket) -> Self {
+        let (queue, pbuf) = match item.size_hint() {
+            Some(hint) => (VecDeque::with_capacity(hint), Vec::with_capacity(hint)),
+            None => (VecDeque::new(), Vec::new())
+        };
+
+        Self {
+            item,
+            queue,
+            pbuf,
+        }
     }
 
-    // Convenience function around write that allows for clearer flow
-    // pub fn print<W: ioWrite>(&self, options: &Options, output: &mut W) {
-    //     for entry in &self.plist {
-    //         let data = self.object.pointer(&entry);
-    //         write(options, output.by_ref(), entry, data);
+    // pub fn parse_json(&'j mut self) {
+    //     match self.item.size_hint() {
+    //         Some(hint) => self.queue.reserve(hint),
+    //         None => (),
+    //     }
+    //     let path = self.item.base_path.clone();
+    //     self.queue.push_back((&self.item.json, path));
+
+    //     loop {
+    //         let value = self.queue.pop_front();
+    //         match value {
+    //             Some((jObject(map), ref s)) => {
+    //                 for (k, v) in map.iter() {
+    //                     let new_path = s.clone() + "/" + k;
+    //                     if v.is_object() {
+    //                         self.pbuf.push(new_path.clone());
+    //                     }
+    //                     if v.is_array() {
+    //                         self.pbuf.push(new_path.clone());
+    //                     }
+    //                     self.queue.push_back((v, new_path));
+    //                 }
+    //             }
+    //             Some((jArray(a), ref s)) => {
+    //                 for (i, v) in a.iter().enumerate() {
+    //                     let new_path = s.clone() + "/" + &i.to_string();
+    //                     self.queue.push_back((v, new_path));
+    //                 }
+    //             }
+    //             Some((jString(_), s)) => self.pbuf.push(s),
+    //             Some((jNumber(_), s)) => self.pbuf.push(s),
+    //             Some((jBool(_), s)) => self.pbuf.push(s),
+    //             Some((jNull, s)) => self.pbuf.push(s),
+    //             None => break,
+    //         }
     //     }
     // }
+}
 
-    // Unwinds the JsonValue, growing a Vec for every endpoint it finds
-    // While queueing any maps or arrays for unwinding
-    fn parse_json(json_value: &JsonValue) -> Vec<String> {
-        let mut list: Vec<String> = Vec::new();
-        let mut jqueue: VecDeque<(&JsonValue, String)> = VecDeque::new();
-        jqueue.push_back((json_value, String::default()));
+impl<'j> Iterator for JsonPointer<'j> {
+    type Item = String;
 
+    fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let value = jqueue.pop_front();
+            let value = self.queue.pop_front();
             match value {
                 Some((jObject(map), ref s)) => {
                     for (k, v) in map.iter() {
                         let new_path = s.clone() + "/" + k;
                         if v.is_object() {
-                            list.push(new_path.clone());
+                            self.pbuf.push(new_path.clone());
                         }
                         if v.is_array() {
-                            list.push(new_path.clone());
+                            self.pbuf.push(new_path.clone());
                         }
-                        jqueue.push_back((v, new_path));
+                        self.queue.push_back((v, new_path));
                     }
                 }
                 Some((jArray(a), ref s)) => {
                     for (i, v) in a.iter().enumerate() {
                         let new_path = s.clone() + "/" + &i.to_string();
-                        jqueue.push_back((v, new_path));
+                        self.queue.push_back((v, new_path));
                     }
                 }
-                Some((jString(_), s)) => list.push(s),
-                Some((jNumber(_), s)) => list.push(s),
-                Some((jBool(_), s)) => list.push(s),
-                Some((jNull, s)) => list.push(s),
+                Some((jString(_), s)) => {
+                    self.pbuf.push(s);
+                    break;
+                }
+                Some((jNumber(_), s)) => {
+                    self.pbuf.push(s);
+                    break;
+                }
+                Some((jBool(_), s)) => {
+                    self.pbuf.push(s);
+                    break;
+                }
+                Some((jNull, s)) => {
+                    self.pbuf.push(s);
+                    break;
+                }
                 None => break,
             }
         }
-        list
+
+        self.pbuf.pop()
+    }
+}
+
+pub struct JsonPacket {
+    base_path: String,
+    json: JsonValue,
+}
+
+impl JsonPacket {
+    pub fn size_hint(&self) -> Option<usize> {
+        match self.json {
+            jObject(ref val) => match val.iter().size_hint() {
+                (_, Some(ub)) => Some(ub),
+                (lb, None) => Some(lb),
+            },
+            jArray(ref val) => Some(val.len()),
+            _ => None,
+        }
+    }
+}
+
+impl TryFrom<(Option<Vec<u8>>, Vec<u8>)> for JsonPacket {
+    type Error = ErrorKind;
+
+    fn try_from(packet: (Option<Vec<u8>>, Vec<u8>)) -> std::result::Result<Self, Self::Error> {
+        let base_path: String = from_slice(packet.0.unwrap_or_default().as_slice())?;
+        let json: JsonValue = from_slice(packet.1.as_slice())?;
+
+        Ok(JsonPacket { base_path, json })
     }
 }
