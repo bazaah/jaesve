@@ -3,7 +3,7 @@ use std::{error::Error, fmt::Debug, io::Error as ioError, ops::Try, process::Ter
 pub(crate) type Result<T> = std::result::Result<T, ErrorKind>;
 
 #[derive(Debug)]
-pub(crate) enum ErrorKind {
+pub enum ErrorKind {
     // Catch all
     Generic,
     // Handles in-thread panics

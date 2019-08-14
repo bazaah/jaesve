@@ -96,8 +96,9 @@ pub fn set_reader(src: &Option<ReadFrom>) -> Box<dyn ioRead + Send> {
 // how badly this function mangled it
 pub(crate) fn unwind_json<I>(
     opts: &ProgramArgs,
+    object_ident: usize,
     scanner: &mut JsonScan<I>,
-    tx_builder: SyncSender<(Option<Vec<u8>>, Vec<u8>)>,
+    tx_builder: SyncSender<(usize, Option<Vec<u8>>, Vec<u8>)>,
     prefix_byte: Option<u8>,
     name_slice: Option<Vec<u8>>,
 ) -> Result<()>
@@ -116,6 +117,7 @@ where
             Some(Ok(b @ b'[')) if scanner.outside_quotes() => {
                 unwind_json(
                     opts,
+                    object_ident,
                     scanner,
                     tx_builder.clone(),
                     Some(b),
@@ -129,6 +131,7 @@ where
             Some(Ok(b @ b'{')) if scanner.outside_quotes() => {
                 unwind_json(
                     opts,
+                    object_ident,
                     scanner,
                     tx_builder.clone(),
                     Some(b),
@@ -154,7 +157,7 @@ where
 
     trace!("AFTER: ({:?}, {:?})", &name_slice, &buffer);
 
-    tx_builder.send((name_slice, buffer)).map_err(|_| {
+    tx_builder.send((object_ident, name_slice, buffer)).map_err(|_| {
         ErrorKind::UnexpectedChannelClose(format!(
             "builder in |reader -> builder| channel has hung up"
         ))
@@ -169,7 +172,7 @@ where
 /// of the JSON object being unwound
 fn get_matching_key(buffer: &Vec<u8>, offsets: (usize, usize)) -> Option<Vec<u8>> {
     let (in_quotes, out_quotes) = offsets;
-    let key: Vec<_> = buffer
+    let mut key: Vec<_> = buffer
         .iter()
         .rev()
         .skip(out_quotes)
