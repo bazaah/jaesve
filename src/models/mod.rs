@@ -169,7 +169,7 @@ where
 /// of the JSON object being unwound
 fn get_matching_key(buffer: &Vec<u8>, offsets: (usize, usize)) -> Option<Vec<u8>> {
     let (in_quotes, out_quotes) = offsets;
-    let key: Vec<_> = buffer
+    let mut key: Vec<_> = buffer
         .iter()
         .rev()
         .skip(out_quotes)
