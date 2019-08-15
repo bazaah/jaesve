@@ -2,13 +2,14 @@ use {
     crate::{
         match_with_log,
         models::{
-            assets::{ReadFrom, RegexOn, RegexOptions},
+            assets::{Delimiter, Field, ReadFrom, RegexOptions},
             get_reader,
         },
     },
     clap::{crate_authors, crate_version, App, Arg, ArgMatches as Matches},
     regex::Regex,
     simplelog::LevelFilter,
+    std::convert::TryFrom,
 };
 
 pub fn generate_cli<'a>() -> Matches<'a> {
@@ -38,13 +39,13 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                 .long_help("Append to output file, instead of overwriting... has no effect if writing to stdout")
         )
         .arg(
-            Arg::with_name("separator")
+            Arg::with_name("delimiter")
                 .short("s")
-                .long("delimiter")
+                .long("delim")
                 .takes_value(true)
                 .value_name("DELIMITER")
-                .default_value("c")
-                .help("c => ',' cs => ', ' t => tab, _ => _"),
+                .default_value(",")
+                .help("Sets delimiter between output fields"),
         )
         .arg(Arg::with_name("type")
             .short("t")
@@ -75,7 +76,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
             .takes_value(true)
             .value_name("TYPE")
             .requires("regex")
-            .possible_values(&["key", "type", "value", "sep"])
+            .possible_values(&["jptr", "type", "value", "delim"])
             .help("Sets column to match regex on")
         )
         .arg(
@@ -96,6 +97,22 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                 .takes_value(true)
                 .help("Specify an output file path, defaults to stdout")
         )
+        .arg(
+            Arg::with_name("format")
+                .short("f")
+                .long("format")
+                .value_name("STRING")
+                .takes_value(true)
+                .default_value("ident.jptr.type.value")
+                .validator(|fmt| {
+                    let res: Result<Vec<_>, _> = fmt.split(".").map(|sub| Field::try_from(sub)).collect();
+                    match res {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(format!("{}", e))
+                    }
+                })
+                .help("A dot ('.') separated list of identifiers describing how output is formatted")
+        )
         .get_matches();
 
     matches
@@ -103,10 +120,11 @@ pub fn generate_cli<'a>() -> Matches<'a> {
 
 pub struct ProgramArgs {
     show_type: bool,
-    separator: String,
+    delimiter: Delimiter,
     debug_level: LevelFilter,
     by_line: bool,
     regex: Option<RegexOptions>,
+    format: Vec<Field>,
     reader: Vec<Option<ReadFrom>>,
     writer: (Option<String>, bool),
 }
@@ -146,7 +164,7 @@ impl<'a> ProgramArgs {
         let regex: Option<RegexOptions> =
             match (store.value_of("regex"), store.value_of("regex_column")) {
                 (Some(_), Some(column))
-                    if store.is_present("type") && RegexOn::from(column) == RegexOn::Type =>
+                    if store.is_present("type") && Field::from(column) == Field::Type =>
                 {
                     match_with_log!(
                         None,
@@ -154,28 +172,34 @@ impl<'a> ProgramArgs {
                     )
                 }
                 (Some(pattern), Some(column)) => Some(RegexOptions::new(pattern, column.into())),
-                (Some(pattern), None) => Some(RegexOptions::new(pattern, RegexOn::default())),
+                (Some(pattern), None) => Some(RegexOptions::new(pattern, Field::default())),
                 (None, _) => None,
             };
+
+        // Unwrap is safe because of default value set in clap
+        let format: Vec<Field> = store
+            .value_of("format")
+            .unwrap()
+            .split(".")
+            .map(|sub| Field::from(sub))
+            .collect();
 
         let by_line = store.is_present("line");
 
         let show_type = !store.is_present("type");
 
-        let separator = String::from(match store.value_of("separator") {
-            Some("c") => ",",
-            Some("t") => "\t",
-            Some("cs") => ", ",
-            Some(s) => s,
-            _ => panic!("Separator missing"),
-        });
+        let delimiter: Delimiter = match store.value_of("delimiter") {
+            Some(s) => s.into(),
+            _ => panic!("delimiter missing"),
+        };
 
         Self {
             show_type,
-            separator,
+            delimiter,
             debug_level,
             by_line,
             regex,
+            format,
             reader,
             writer,
         }
@@ -191,5 +215,13 @@ impl<'a> ProgramArgs {
 
     pub fn writer(&self) -> &(Option<String>, bool) {
         &self.writer
+    }
+
+    pub fn delimiter(&self) -> Delimiter {
+        self.delimiter.clone()
+    }
+
+    pub fn format(&self) -> &[Field] {
+        &self.format
     }
 }
