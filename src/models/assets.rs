@@ -13,7 +13,7 @@ use {
         error::Error,
         io::{Result as ioResult, Write as ioWrite},
         path::PathBuf,
-        str::FromStr,
+        str::{from_utf8, FromStr},
     },
 };
 
@@ -49,9 +49,14 @@ impl std::fmt::Display for ReadFrom {
     }
 }
 
-pub trait Builder {
+pub trait Builder<D>
+where
+    D: Into<Field>,
+{
     type Block: std::fmt::Display;
     type Error: Error;
+
+    fn build_with(&self, d: D) -> Result<Self::Block, Box<dyn self::Error>>;
 
     fn identifer(&self) -> Result<Self::Block, Box<dyn self::Error>>;
 
@@ -67,7 +72,7 @@ pub trait Builder {
 #[derive(Debug)]
 pub enum BlockKind {
     Ident(usize),
-    Delimiter(char),
+    Delimiter(Delimiter),
     Type(JType),
     Pointer(String),
     Value(Option<String>),
@@ -100,7 +105,7 @@ impl Output {
 
     fn get_delimiter(&self) -> Option<BlockKind> {
         self.blocks.iter().find_map(|kind| match kind {
-            BlockKind::Delimiter(d) => Some(BlockKind::Delimiter(*d)),
+            BlockKind::Delimiter(d) => Some(BlockKind::Delimiter(d.clone())),
             _ => None,
         })
     }
@@ -127,9 +132,21 @@ impl Output {
     }
 }
 
-impl Builder for Output {
+impl<D> Builder<D> for Output
+where
+    D: Into<Field>,
+{
     type Block = BlockKind;
     type Error = ErrorKind;
+    fn build_with(&self, d: D) -> Result<Self::Block, Box<dyn self::Error>> {
+        match d.into() {
+            Field::Identifier => self.get_ident().ok_or(Box::new(ErrorKind::Generic)),
+            Field::Type => self.get_type().ok_or(Box::new(ErrorKind::Generic)),
+            Field::Pointer => self.get_pointer().ok_or(Box::new(ErrorKind::Generic)),
+            Field::Value => self.get_value().ok_or(Box::new(ErrorKind::Generic)),
+            _ => Err(Box::new(ErrorKind::Generic)),
+        }
+    }
 
     fn identifer(&self) -> Result<Self::Block, Box<dyn self::Error>> {
         self.get_ident().ok_or(Box::new(ErrorKind::Generic))
@@ -152,6 +169,7 @@ impl Builder for Output {
     }
 }
 
+#[derive(Debug)]
 pub struct OutputBuilder {
     blocks: [Option<BlockKind>; 5],
 }
@@ -179,7 +197,7 @@ impl OutputBuilder {
         self
     }
 
-    pub fn delim(mut self, delim: char) -> Self {
+    pub fn delim(mut self, delim: Delimiter) -> Self {
         self.blocks[1] = Some(BlockKind::Delimiter(delim));
         self
     }
@@ -251,39 +269,41 @@ impl std::fmt::Display for JType {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum RegexOn {
-    Entry,
-    Value,
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Field {
+    Identifier,
+    Delimiter,
     Type,
-    Separator,
+    Pointer,
+    Value,
 }
 
-impl From<&str> for RegexOn {
+impl From<&str> for Field {
     fn from(s: &str) -> Self {
         match s {
-            "key" => RegexOn::Entry,
-            "type" => RegexOn::Type,
-            "sep" => RegexOn::Separator,
-            "value" => RegexOn::Value,
-            _ => RegexOn::Entry,
+            "ident" => Field::Identifier,
+            "delim" => Field::Delimiter,
+            "type" => Field::Type,
+            "jptr" => Field::Pointer,
+            "value" => Field::Value,
+            _ => panic!("Called infallible conversion to Field on a fallible conversion, use try_from instead"),
         }
     }
 }
 
-impl Default for RegexOn {
+impl Default for Field {
     fn default() -> Self {
-        RegexOn::Entry
+        Field::Pointer
     }
 }
 
 pub struct RegexOptions {
     regex: regex::Regex,
-    column: RegexOn,
+    column: Field,
 }
 
 impl RegexOptions {
-    pub fn new(pattern: &str, column: RegexOn) -> Self {
+    pub fn new(pattern: &str, column: Field) -> Self {
         // Checked by clap, unwrap here is safe
         let regex = regex::Regex::from_str(pattern).unwrap();
         RegexOptions { regex, column }
@@ -293,13 +313,59 @@ impl RegexOptions {
         &self.regex
     }
 
-    pub fn get_column(&self) -> &RegexOn {
-        &self.column
+    pub fn get_column(&self) -> Field {
+        self.column
+    }
+}
+
+#[derive(Debug)]
+pub enum Delimiter {
+    Char(char),
+    Multiple(Vec<char>),
+}
+
+impl From<&str> for Delimiter {
+    fn from(s: &str) -> Self {
+        let len = |hint: (usize, Option<usize>)| -> usize { hint.1.unwrap_or(hint.0) };
+        if len(s.chars().size_hint()) > 1 {
+            let ch_buf: Vec<char> = s.chars().collect();
+            Delimiter::Multiple(ch_buf)
+        } else {
+            let ch = s.chars().take(1).next().unwrap_or_else(|| {
+                warn!("no delimiter detected, using default");
+                ','
+            });
+            Delimiter::Char(ch)
+        }
+    }
+}
+
+impl Clone for Delimiter {
+    fn clone(&self) -> Self {
+        match self {
+            Delimiter::Char(c) => Delimiter::Char(*c),
+            Delimiter::Multiple(vec) => Delimiter::Multiple(vec.clone()),
+        }
+    }
+}
+
+impl std::fmt::Display for Delimiter {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Delimiter::Char(c) => write!(f, "{}", c),
+            Delimiter::Multiple(vec) => {
+                for c in vec {
+                    write!(f, "{}", c)?;
+                }
+                Ok(())
+            }
+        }
     }
 }
 
 pub struct JsonScan<I> {
     iter: I,
+    ch: Option<ioResult<u8>>,
     prev: Option<u8>,
     state: ScanState,
     /// (InQuotes, OutQuotes)
@@ -313,6 +379,7 @@ where
     pub fn new(iter: I) -> JsonScan<I> {
         JsonScan {
             iter,
+            ch: None,
             prev: None,
             state: ScanState::OutQuotes,
             offsets: (0, 0),
@@ -328,6 +395,44 @@ where
 
     pub fn offsets(&self) -> (usize, usize) {
         self.offsets
+    }
+
+    pub fn peak(&mut self) -> Option<&ioResult<u8>> {
+        match self.ch {
+            Some(ref ok @ Ok(_)) => Some(&ok),
+            Some(ref err @ Err(_)) => Some(&err),
+            None => match self.iter.next() {
+                ch @ Some(_) => {
+                    self.ch = ch;
+                    self.ch.as_ref()
+                }
+                None => None,
+            },
+        }
+    }
+
+    pub fn discard(&mut self) {
+        self.ch = None
+    }
+
+    pub fn return_error(self) -> ErrorKind {
+        match self.ch.unwrap() {
+            Err(e) => e.into(),
+            _ => panic!("this should never happen"),
+        }
+    }
+
+    fn internal_next(&mut self) -> Option<ioResult<u8>> {
+        match self.ch.take() {
+            ch @ Some(_) => ch,
+            None => match self.iter.next() {
+                ch @ Some(_) => {
+                    self.ch = ch;
+                    self.internal_next()
+                }
+                None => None,
+            },
+        }
     }
 
     fn handle_state(&mut self) {
@@ -361,7 +466,7 @@ where
     type Item = ioResult<u8>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.iter.next() {
+        match self.internal_next() {
             Some(Ok(b @ b'"')) => {
                 self.handle_state();
                 //self.offset(); Should starting a new offset be 0 or 1?
@@ -424,7 +529,7 @@ impl<'j> JsonPointer<'j> {
                                     .ident(self.ident)
                                     .pointer(new_path.clone())
                                     .value(None)
-                                    .type_of(value.as_ref().unwrap().0.into()),
+                                    .type_of(v.into()),
                             );
                         }
                         if v.is_array() {
@@ -433,7 +538,7 @@ impl<'j> JsonPointer<'j> {
                                     .ident(self.ident)
                                     .pointer(new_path.clone())
                                     .value(None)
-                                    .type_of(value.as_ref().unwrap().0.into()),
+                                    .type_of(v.into()),
                             );
                         }
                         self.queue.push_back((v, new_path));
@@ -524,22 +629,155 @@ impl JsonPacket {
     }
 }
 
-impl TryFrom<(usize, Option<Vec<u8>>, Vec<u8>)> for JsonPacket {
+impl TryFrom<(usize, String, Vec<u8>)> for JsonPacket {
     type Error = ErrorKind;
 
-    fn try_from(
-        packet: (usize, Option<Vec<u8>>, Vec<u8>),
-    ) -> std::result::Result<Self, Self::Error> {
-        let base_path: String = from_slice(packet.1.unwrap_or_default().as_slice())?;
+    fn try_from(packet: (usize, String, Vec<u8>)) -> std::result::Result<Self, Self::Error> {
+        trace!(
+            "trying to convert: {} {:?}",
+            &packet.1,
+            from_utf8(&packet.2)
+        );
         let json: JsonValue = from_slice(packet.2.as_slice())?;
 
         Ok(JsonPacket {
             ident: packet.0,
-            base_path,
+            base_path: packet.1,
             json,
         })
     }
 }
+
+/// Custom iterator interface for checking if an item
+/// is the first or last item in an iterator
+/// returns a tuple -> (is_first: bool, is_last: bool, item)
+pub trait IdentifyFirstLast: Iterator + Sized {
+    fn identify_first_last(self) -> FirstLast<Self>;
+}
+
+impl<I> IdentifyFirstLast for I
+where
+    I: Iterator,
+{
+    fn identify_first_last(self) -> FirstLast<Self> {
+        FirstLast(true, self.peekable())
+    }
+}
+
+pub struct FirstLast<I>(bool, std::iter::Peekable<I>)
+where
+    I: Iterator;
+
+impl<I> Iterator for FirstLast<I>
+where
+    I: Iterator,
+{
+    type Item = (bool, bool, I::Item);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let first = std::mem::replace(&mut self.0, false);
+        self.1.next().map(|e| (first, self.1.peek().is_none(), e))
+    }
+}
+
+#[derive(Debug)]
+pub enum PointerKind {
+    Array(usize),
+    Object(String),
+}
+
+impl From<usize> for PointerKind {
+    fn from(u: usize) -> Self {
+        PointerKind::Array(u)
+    }
+}
+
+impl From<String> for PointerKind {
+    fn from(s: String) -> Self {
+        PointerKind::Object(s)
+    }
+}
+
+impl From<&str> for PointerKind {
+    fn from(s: &str) -> Self {
+        PointerKind::Object(s.to_owned())
+    }
+}
+
+impl std::fmt::Display for PointerKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            PointerKind::Array(u) => write!(f, "{}", u),
+            PointerKind::Object(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+// #[derive(Debug)]
+// pub struct PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     list: Vec<D>,
+//     split: S,
+// }
+
+// impl<D, S> PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     pub fn new(list: Vec<D>, split: S) -> Self {
+//         Self { list, split }
+//     }
+
+//     pub fn push(&mut self, item: D) {
+//         self.list.push(item)
+//     }
+
+//     pub fn pop(&mut self) -> Option<D> {
+//         self.list.pop()
+//     }
+// }
+
+// impl<D, S> AsRef<Vec<D>> for PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     fn as_ref(&self) -> &Vec<D> {
+//         &self.list
+//     }
+// }
+
+// impl<D, S> AsMut<Vec<D>> for PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     fn as_mut(&mut self) -> &mut Vec<D> {
+//         &mut self.list
+//     }
+// }
+
+// impl<D, S> std::fmt::Display for PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+//         write!(f, "{}", self.split)?;
+//         for (_, last, item) in self.list.iter().identify_first_last() {
+//             if !last {
+//                 write!(f, "{}{}", item, self.split)?;
+//             } else {
+//                 write!(f, "{}", item)?;
+//             }
+//         }
+//         Ok(())
+//     }
+// }
 
 // pub fn parse_json(&'j mut self) {
 //     match self.item.size_hint() {
