@@ -55,6 +55,14 @@ fn main() -> ProgramExit<ErrorKind> {
             ))
         })?;
     }
+
+    // Waits for remaining threads to complete
+    reader.join().map_err(|_| {
+        ErrorKind::ThreadFailed(format!(
+            "{}",
+            std::thread::current().name().unwrap_or("unnamed")
+        ))
+    })??;
     // Return 0
     ProgramExit::Success
 }
