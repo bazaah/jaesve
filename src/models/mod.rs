@@ -3,7 +3,7 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            assets::{JsonScan, ReadFrom},
+            assets::{Builder, Field, IdentifyFirstLast, JsonScan, ReadFrom},
             error::{ErrorKind, Result},
         },
     },
@@ -14,6 +14,7 @@ use {
             Write as ioWrite,
         },
         path::PathBuf,
+        str::from_utf8,
         sync::mpsc::SyncSender,
     },
 };
@@ -111,7 +112,11 @@ where
         Some(b) => vec![b],
         None => Vec::new(),
     };
-    trace!("BEFORE: ({:?}, {:?})", &name_slice, &buffer);
+    trace!(
+        "BEFORE: ({:?}, {:?})",
+        &name_slice.as_ref().map(|bv| from_utf8(bv)),
+        from_utf8(&buffer)
+    );
     loop {
         match scanner.next() {
             Some(Ok(b @ b'[')) if scanner.outside_quotes() => {
@@ -155,13 +160,19 @@ where
         }
     }
 
-    trace!("AFTER: ({:?}, {:?})", &name_slice, &buffer);
+    trace!(
+        "AFTER: ({:?}, {:?})",
+        &name_slice.as_ref().map(|bv| from_utf8(bv)),
+        from_utf8(&buffer)
+    );
 
-    tx_builder.send((object_ident, name_slice, buffer)).map_err(|_| {
-        ErrorKind::UnexpectedChannelClose(format!(
-            "builder in |reader -> builder| channel has hung up"
-        ))
-    })?;
+    tx_builder
+        .send((object_ident, name_slice, buffer))
+        .map_err(|_| {
+            ErrorKind::UnexpectedChannelClose(format!(
+                "builder in |reader -> builder| channel has hung up"
+            ))
+        })?;
 
     drop(tx_builder);
     debug!("Finished parsing a JSON object/array");
@@ -181,11 +192,27 @@ fn get_matching_key(buffer: &Vec<u8>, offsets: (usize, usize)) -> Option<Vec<u8>
         .collect();
     key.reverse();
 
-    trace!("KEY: {:?}", &key);
+    trace!("KEY: {:?}", from_utf8(&key));
 
     Some(key)
 }
 
+pub fn write_formatted_output<B, W>(w: &mut W, blocks: B, blueprint: &[Field]) -> Result<()>
+where
+    B: Builder<Field>,
+    W: ioWrite,
+{
+    let iter = blueprint.iter().identify_first_last();
+    for (_, last, field) in iter {
+        write!(w, "{}", blocks.build_with(*field)?)?;
+        if !last {
+            write!(w, "{}", blocks.delimiter()?)?;
+        }
+    }
+    write!(w, "\n")?;
+
+    Ok(())
+}
 /*
 // Puts all the pieces together
 pub fn to_csv<W: Write>(

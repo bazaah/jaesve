@@ -49,9 +49,14 @@ impl std::fmt::Display for ReadFrom {
     }
 }
 
-pub trait Builder {
+pub trait Builder<D>
+where
+    D: Into<Field>,
+{
     type Block: std::fmt::Display;
     type Error: Error;
+
+    fn build_with(&self, d: D) -> Result<Self::Block, Box<dyn self::Error>>;
 
     fn identifer(&self) -> Result<Self::Block, Box<dyn self::Error>>;
 
@@ -67,11 +72,23 @@ pub trait Builder {
 #[derive(Debug)]
 pub enum BlockKind {
     Ident(usize),
-    Delimiter(char),
+    Delimiter(Delimiter),
     Type(JType),
     Pointer(String),
     Value(Option<String>),
 }
+
+// impl Into<Field> for &BlockKind {
+//     fn into(self) -> Field {
+//         match self {
+//             BlockKind::Ident(_) => Field::Identifier,
+//             BlockKind::Delimiter(_) => Field::Delimiter,
+//             BlockKind::Type(_) => Field::Type,
+//             BlockKind::Pointer(_) => Field::Pointer,
+//             BlockKind::Value(_) => Field::Value,
+//         }
+//     }
+// }
 
 impl std::fmt::Display for BlockKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -100,7 +117,7 @@ impl Output {
 
     fn get_delimiter(&self) -> Option<BlockKind> {
         self.blocks.iter().find_map(|kind| match kind {
-            BlockKind::Delimiter(d) => Some(BlockKind::Delimiter(*d)),
+            BlockKind::Delimiter(d) => Some(BlockKind::Delimiter(d.clone())),
             _ => None,
         })
     }
@@ -127,9 +144,21 @@ impl Output {
     }
 }
 
-impl Builder for Output {
+impl<D> Builder<D> for Output
+where
+    D: Into<Field>,
+{
     type Block = BlockKind;
     type Error = ErrorKind;
+    fn build_with(&self, d: D) -> Result<Self::Block, Box<dyn self::Error>> {
+        match d.into() {
+            Field::Identifier => self.get_ident().ok_or(Box::new(ErrorKind::Generic)),
+            Field::Type => self.get_type().ok_or(Box::new(ErrorKind::Generic)),
+            Field::Pointer => self.get_pointer().ok_or(Box::new(ErrorKind::Generic)),
+            Field::Value => self.get_value().ok_or(Box::new(ErrorKind::Generic)),
+            _ => Err(Box::new(ErrorKind::Generic)),
+        }
+    }
 
     fn identifer(&self) -> Result<Self::Block, Box<dyn self::Error>> {
         self.get_ident().ok_or(Box::new(ErrorKind::Generic))
@@ -179,7 +208,7 @@ impl OutputBuilder {
         self
     }
 
-    pub fn delim(mut self, delim: char) -> Self {
+    pub fn delim(mut self, delim: Delimiter) -> Self {
         self.blocks[1] = Some(BlockKind::Delimiter(delim));
         self
     }
@@ -251,39 +280,57 @@ impl std::fmt::Display for JType {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum RegexOn {
-    Entry,
-    Value,
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Field {
+    Identifier,
+    Delimiter,
     Type,
-    Separator,
+    Pointer,
+    Value,
 }
 
-impl From<&str> for RegexOn {
+// impl TryFrom<&str> for Field {
+//     type Error = ErrorKind;
+//     fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
+//         match s {
+//             "ident" => Ok(Field::Identifier),
+//             "delim" => Ok(Field::Delimiter),
+//             "type" => Ok(Field::Type),
+//             "jptr" => Ok(Field::Pointer),
+//             "value" => Ok(Field::Value),
+//             _ => Err(ErrorKind::Generic),
+//         }
+//     }
+// }
+
+impl From<&str> for Field {
+
     fn from(s: &str) -> Self {
         match s {
-            "key" => RegexOn::Entry,
-            "type" => RegexOn::Type,
-            "sep" => RegexOn::Separator,
-            "value" => RegexOn::Value,
-            _ => RegexOn::Entry,
+            "ident" => Field::Identifier,
+            "delim" => Field::Delimiter,
+            "type" => Field::Type,
+            "jptr" => Field::Pointer,
+            "value" => Field::Value,
+            _ => panic!("Called infallible conversion to Field on a fallible conversion, use try_from instead"),
         }
     }
 }
 
-impl Default for RegexOn {
+
+impl Default for Field {
     fn default() -> Self {
-        RegexOn::Entry
+        Field::Pointer
     }
 }
 
 pub struct RegexOptions {
     regex: regex::Regex,
-    column: RegexOn,
+    column: Field,
 }
 
 impl RegexOptions {
-    pub fn new(pattern: &str, column: RegexOn) -> Self {
+    pub fn new(pattern: &str, column: Field) -> Self {
         // Checked by clap, unwrap here is safe
         let regex = regex::Regex::from_str(pattern).unwrap();
         RegexOptions { regex, column }
@@ -293,8 +340,53 @@ impl RegexOptions {
         &self.regex
     }
 
-    pub fn get_column(&self) -> &RegexOn {
-        &self.column
+    pub fn get_column(&self) -> Field {
+        self.column
+    }
+}
+
+#[derive(Debug)]
+pub enum Delimiter {
+    Char(char),
+    Multiple(Vec<char>),
+}
+
+impl From<&str> for Delimiter {
+    fn from(s: &str) -> Self {
+        let len = |hint: (usize, Option<usize>)| -> usize { hint.1.unwrap_or(hint.0) };
+        if len(s.chars().size_hint()) > 1 {
+            let ch_buf: Vec<char> = s.chars().collect();
+            Delimiter::Multiple(ch_buf)
+        } else {
+            let ch = s.chars().take(1).next().unwrap_or_else(|| {
+                warn!("no delimiter detected, using default");
+                ','
+            });
+            Delimiter::Char(ch)
+        }
+    }
+}
+
+impl Clone for Delimiter {
+    fn clone(&self) -> Self {
+        match self {
+            Delimiter::Char(c) => Delimiter::Char(*c),
+            Delimiter::Multiple(vec) => Delimiter::Multiple(vec.clone()),
+        }
+    }
+}
+
+impl std::fmt::Display for Delimiter {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Delimiter::Char(c) => write!(f, "{}", c),
+            Delimiter::Multiple(vec) => {
+                for c in vec {
+                    write!(f, "{}", c)?;
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -538,6 +630,38 @@ impl TryFrom<(usize, Option<Vec<u8>>, Vec<u8>)> for JsonPacket {
             base_path,
             json,
         })
+    }
+}
+
+/// Custom iterator interface for checking if an item
+/// is the first or last item in an iterator
+/// returns a tuple -> (is_first: bool, is_last: bool, item)
+pub trait IdentifyFirstLast: Iterator + Sized {
+    fn identify_first_last(self) -> FirstLast<Self>;
+}
+
+impl<I> IdentifyFirstLast for I
+where
+    I: Iterator,
+{
+    fn identify_first_last(self) -> FirstLast<Self> {
+        FirstLast(true, self.peekable())
+    }
+}
+
+pub struct FirstLast<I>(bool, std::iter::Peekable<I>)
+where
+    I: Iterator;
+
+impl<I> Iterator for FirstLast<I>
+where
+    I: Iterator,
+{
+    type Item = (bool, bool, I::Item);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let first = std::mem::replace(&mut self.0, false);
+        self.1.next().map(|e| (first, self.1.peek().is_none(), e))
     }
 }
 
