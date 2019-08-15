@@ -4,9 +4,9 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            assets::{JsonPacket, JsonPointer, JsonScan, Output},
+            assets::{JsonPacket, JsonPointer, JsonScan, Output, Field},
             error::{ErrorKind, Result},
-            get_writer, unwind_json,
+            get_writer, unwind_json, write_formatted_output,
         },
     },
     serde::{ser::SerializeSeq, Serializer},
@@ -52,7 +52,8 @@ pub(crate) fn spawn_workers(
             // Hot loop
             while let Some(channel) = rx_builder.iter().next() {
                 for output in channel {
-                    writeln!(&mut writer, "{:?}", output)?;
+                    //let garb = [Field::Identifier, Field::Value];
+                    write_formatted_output(&mut writer, output, opts.format())?;
                 }
             }
 
@@ -84,11 +85,13 @@ pub(crate) fn spawn_workers(
                     let builder = JsonPointer::new(&json, metadata);
 
                     for item in builder {
-                        data_tx.send(item.done()).map_err(|_| {
-                            ErrorKind::UnexpectedChannelClose(format!(
-                                "writer in |builder -> writer| channel has hung up"
-                            ))
-                        })?;
+                        data_tx
+                            .send(item.delim(opts.delimiter()).done())
+                            .map_err(|_| {
+                                ErrorKind::UnexpectedChannelClose(format!(
+                                    "writer in |builder -> writer| channel has hung up"
+                                ))
+                            })?;
                     }
                 }
             }
@@ -124,6 +127,7 @@ pub(crate) fn spawn_workers(
                 })?;
                 let mut scanner = JsonScan::new(BufReader::new(src).bytes());
 
+                debug!("Entering unwind_json calls");
                 unwind_json(&opts, index, &mut scanner, data_tx, None, None)?;
             }
 
