@@ -4,7 +4,7 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            assets::{JsonPacket, JsonPointer, JsonScan},
+            assets::{JsonPacket, JsonPointer, JsonScan, Output},
             error::{ErrorKind, Result},
             get_writer, unwind_json,
         },
@@ -27,13 +27,16 @@ pub(crate) fn spawn_workers(
     opts: &'static ProgramArgs,
     from_source: Receiver<Box<dyn ioRead + Send>>,
 ) -> Result<JoinHandle<Result<()>>> {
-    type Parts = (Option<Vec<u8>>, Vec<u8>);
-    type Output = String;
+    type ToBuilder = (usize, Option<Vec<u8>>, Vec<u8>);
+    type ToWriter = Output;
 
     // Meta channel: |Reader -> Builder|, delivers new receivers to builder
-    let (ReBu_tx, ReBu_rx): (SyncSender<Receiver<Parts>>, Receiver<Receiver<Parts>>) = syncQueue(0);
+    let (ReBu_tx, ReBu_rx): (
+        SyncSender<Receiver<ToBuilder>>,
+        Receiver<Receiver<ToBuilder>>,
+    ) = syncQueue(0);
     // Meta channel: |Builder -> Writer|, delivers new receivers to writer
-    let (BuWr_tx, BuWr_rx): (SyncSender<Receiver<Output>>, Receiver<Receiver<Output>>) =
+    let (BuWr_tx, BuWr_rx): (SyncSender<Receiver<ToWriter>>, Receiver<Receiver<ToWriter>>) =
         syncQueue(0);
 
     // Writer
@@ -49,7 +52,7 @@ pub(crate) fn spawn_workers(
             // Hot loop
             while let Some(channel) = rx_builder.iter().next() {
                 for output in channel {
-                    writeln!(&mut writer, "{}, {}", output.0, output.1)?;
+                    writeln!(&mut writer, "{:?}", output)?;
                 }
             }
 
@@ -69,7 +72,7 @@ pub(crate) fn spawn_workers(
 
             // Hot loop
             while let Some(channel) = rx_reader.iter().next() {
-                let (data_tx, data_rx): (SyncSender<Output>, Receiver<Output>) = syncQueue(10);
+                let (data_tx, data_rx): (SyncSender<ToWriter>, Receiver<ToWriter>) = syncQueue(10);
                 tx_writer.send(data_rx).map_err(|_| {
                     ErrorKind::UnexpectedChannelClose(format!(
                         "failed to send next |builder -> writer| channel, writer has hung up"
@@ -77,14 +80,15 @@ pub(crate) fn spawn_workers(
                 })?;
 
                 for packet in channel {
-                    let builder = JsonPointer::new(JsonPacket::try_from(packet)?);
+                    let (json, metadata) = JsonPacket::try_from(packet)?.into_inner();
+                    let builder = JsonPointer::new(&json, metadata);
 
                     for item in builder {
-                    data_tx.send(item).map_err(|_| {
-                        ErrorKind::UnexpectedChannelClose(format!(
-                            "writer in |builder -> writer| channel has hung up"
-                        ))
-                    })?;
+                        data_tx.send(item.done()).map_err(|_| {
+                            ErrorKind::UnexpectedChannelClose(format!(
+                                "writer in |builder -> writer| channel has hung up"
+                            ))
+                        })?;
                     }
                 }
             }
@@ -110,8 +114,9 @@ pub(crate) fn spawn_workers(
             let opts = &opts;
 
             // Hot loop
-            while let Some(src) = from_source.iter().next() {
-                let (data_tx, data_rx): (SyncSender<Parts>, Receiver<Parts>) = syncQueue(10);
+            while let Some((index, src)) = from_source.iter().enumerate().next() {
+                let (data_tx, data_rx): (SyncSender<ToBuilder>, Receiver<ToBuilder>) =
+                    syncQueue(10);
                 tx_builder.send(data_rx).map_err(|_| {
                     ErrorKind::UnexpectedChannelClose(format!(
                         "failed to send next |reader -> builder| channel, builder has hung up"
@@ -119,7 +124,7 @@ pub(crate) fn spawn_workers(
                 })?;
                 let mut scanner = JsonScan::new(BufReader::new(src).bytes());
 
-                unwind_json(&opts, &mut scanner, data_tx, None, None)?;
+                unwind_json(&opts, index, &mut scanner, data_tx, None, None)?;
             }
 
             // Cleanup
