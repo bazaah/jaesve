@@ -9,10 +9,7 @@ use {
     },
     std::{
         fs::{File, OpenOptions},
-        io::{
-            stdin as cin, stdout as cout, BufReader, Read as ioRead, Result as ioResult,
-            Write as ioWrite,
-        },
+        io::{stdin as cin, stdout as cout, Read as ioRead, Result as ioResult, Write as ioWrite},
         path::PathBuf,
         str::from_utf8,
         sync::mpsc::SyncSender,
@@ -186,8 +183,8 @@ fn get_matching_key(buffer: &Vec<u8>, offsets: (usize, usize)) -> Option<Vec<u8>
     let mut key: Vec<_> = buffer
         .iter()
         .rev()
-        .skip(out_quotes)
-        .take(in_quotes)
+        .skip(out_quotes - 1)
+        .take(in_quotes + 2)
         .copied()
         .collect();
     key.reverse();

@@ -13,7 +13,7 @@ use {
         error::Error,
         io::{Result as ioResult, Write as ioWrite},
         path::PathBuf,
-        str::FromStr,
+        str::{from_utf8, FromStr},
     },
 };
 
@@ -181,6 +181,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct OutputBuilder {
     blocks: [Option<BlockKind>; 5],
 }
@@ -304,7 +305,6 @@ pub enum Field {
 // }
 
 impl From<&str> for Field {
-
     fn from(s: &str) -> Self {
         match s {
             "ident" => Field::Identifier,
@@ -316,7 +316,6 @@ impl From<&str> for Field {
         }
     }
 }
-
 
 impl Default for Field {
     fn default() -> Self {
@@ -622,7 +621,18 @@ impl TryFrom<(usize, Option<Vec<u8>>, Vec<u8>)> for JsonPacket {
     fn try_from(
         packet: (usize, Option<Vec<u8>>, Vec<u8>),
     ) -> std::result::Result<Self, Self::Error> {
-        let base_path: String = from_slice(packet.1.unwrap_or_default().as_slice())?;
+        warn!(
+            "trying to convert: {:?} {:?}",
+            &packet.1.as_ref().map(|bv| from_utf8(bv)),
+            from_utf8(&packet.2)
+        );
+        let base_path = match packet.1 {
+            Some(vec) => match vec.is_empty() {
+                false => from_slice(vec.as_slice()),
+                true => Ok(String::default()),
+            },
+            None => Ok(String::default()),
+        }?;
         let json: JsonValue = from_slice(packet.2.as_slice())?;
 
         Ok(JsonPacket {

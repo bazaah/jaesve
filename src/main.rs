@@ -56,12 +56,16 @@ fn main() -> ProgramExit<ErrorKind> {
         })?;
     }
 
+    // Signals that that no new input sources will be sent
+    drop(tx);
+
     // Waits for remaining threads to complete
     reader.join().map_err(|_| {
         ErrorKind::ThreadFailed(format!(
             "{}",
             std::thread::current().name().unwrap_or("unnamed")
         ))
+        // join() returns a Result<Result<(), Errorkind>, ErrorKind>, hence the double question mark
     })??;
     // Return 0
     ProgramExit::Success
