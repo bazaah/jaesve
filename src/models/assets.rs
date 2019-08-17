@@ -78,18 +78,6 @@ pub enum BlockKind {
     Value(Option<String>),
 }
 
-// impl Into<Field> for &BlockKind {
-//     fn into(self) -> Field {
-//         match self {
-//             BlockKind::Ident(_) => Field::Identifier,
-//             BlockKind::Delimiter(_) => Field::Delimiter,
-//             BlockKind::Type(_) => Field::Type,
-//             BlockKind::Pointer(_) => Field::Pointer,
-//             BlockKind::Value(_) => Field::Value,
-//         }
-//     }
-// }
-
 impl std::fmt::Display for BlockKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
@@ -290,20 +278,6 @@ pub enum Field {
     Value,
 }
 
-// impl TryFrom<&str> for Field {
-//     type Error = ErrorKind;
-//     fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
-//         match s {
-//             "ident" => Ok(Field::Identifier),
-//             "delim" => Ok(Field::Delimiter),
-//             "type" => Ok(Field::Type),
-//             "jptr" => Ok(Field::Pointer),
-//             "value" => Ok(Field::Value),
-//             _ => Err(ErrorKind::Generic),
-//         }
-//     }
-// }
-
 impl From<&str> for Field {
     fn from(s: &str) -> Self {
         match s {
@@ -391,6 +365,7 @@ impl std::fmt::Display for Delimiter {
 
 pub struct JsonScan<I> {
     iter: I,
+    ch: Option<ioResult<u8>>,
     prev: Option<u8>,
     state: ScanState,
     /// (InQuotes, OutQuotes)
@@ -404,6 +379,7 @@ where
     pub fn new(iter: I) -> JsonScan<I> {
         JsonScan {
             iter,
+            ch: None,
             prev: None,
             state: ScanState::OutQuotes,
             offsets: (0, 0),
@@ -419,6 +395,44 @@ where
 
     pub fn offsets(&self) -> (usize, usize) {
         self.offsets
+    }
+
+    pub fn peak(&mut self) -> Option<&ioResult<u8>> {
+        match self.ch {
+            Some(ref ok @ Ok(_)) => Some(&ok),
+            Some(ref err @ Err(_)) => Some(&err),
+            None => match self.iter.next() {
+                ch @ Some(_) => {
+                    self.ch = ch;
+                    self.ch.as_ref()
+                }
+                None => None,
+            },
+        }
+    }
+
+    pub fn discard(&mut self) {
+        self.ch = None
+    }
+
+    pub fn return_error(self) -> ErrorKind {
+        match self.ch.unwrap() {
+            Err(e) => e.into(),
+            _ => panic!("this should never happen"),
+        }
+    }
+
+    fn internal_next(&mut self) -> Option<ioResult<u8>> {
+        match self.ch.take() {
+            ch @ Some(_) => ch,
+            None => match self.iter.next() {
+                ch @ Some(_) => {
+                    self.ch = ch;
+                    self.internal_next()
+                }
+                None => None,
+            },
+        }
     }
 
     fn handle_state(&mut self) {
@@ -452,7 +466,7 @@ where
     type Item = ioResult<u8>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.iter.next() {
+        match self.internal_next() {
             Some(Ok(b @ b'"')) => {
                 self.handle_state();
                 //self.offset(); Should starting a new offset be 0 or 1?
@@ -515,7 +529,7 @@ impl<'j> JsonPointer<'j> {
                                     .ident(self.ident)
                                     .pointer(new_path.clone())
                                     .value(None)
-                                    .type_of(value.as_ref().unwrap().0.into()),
+                                    .type_of(v.into()),
                             );
                         }
                         if v.is_array() {
@@ -524,7 +538,7 @@ impl<'j> JsonPointer<'j> {
                                     .ident(self.ident)
                                     .pointer(new_path.clone())
                                     .value(None)
-                                    .type_of(value.as_ref().unwrap().0.into()),
+                                    .type_of(v.into()),
                             );
                         }
                         self.queue.push_back((v, new_path));
@@ -615,29 +629,20 @@ impl JsonPacket {
     }
 }
 
-impl TryFrom<(usize, Option<Vec<u8>>, Vec<u8>)> for JsonPacket {
+impl TryFrom<(usize, String, Vec<u8>)> for JsonPacket {
     type Error = ErrorKind;
 
-    fn try_from(
-        packet: (usize, Option<Vec<u8>>, Vec<u8>),
-    ) -> std::result::Result<Self, Self::Error> {
-        warn!(
-            "trying to convert: {:?} {:?}",
-            &packet.1.as_ref().map(|bv| from_utf8(bv)),
+    fn try_from(packet: (usize, String, Vec<u8>)) -> std::result::Result<Self, Self::Error> {
+        trace!(
+            "trying to convert: {} {:?}",
+            &packet.1,
             from_utf8(&packet.2)
         );
-        let base_path = match packet.1 {
-            Some(vec) => match vec.is_empty() {
-                false => from_slice(vec.as_slice()),
-                true => Ok(String::default()),
-            },
-            None => Ok(String::default()),
-        }?;
         let json: JsonValue = from_slice(packet.2.as_slice())?;
 
         Ok(JsonPacket {
             ident: packet.0,
-            base_path,
+            base_path: packet.1,
             json,
         })
     }
@@ -674,6 +679,105 @@ where
         self.1.next().map(|e| (first, self.1.peek().is_none(), e))
     }
 }
+
+#[derive(Debug)]
+pub enum PointerKind {
+    Array(usize),
+    Object(String),
+}
+
+impl From<usize> for PointerKind {
+    fn from(u: usize) -> Self {
+        PointerKind::Array(u)
+    }
+}
+
+impl From<String> for PointerKind {
+    fn from(s: String) -> Self {
+        PointerKind::Object(s)
+    }
+}
+
+impl From<&str> for PointerKind {
+    fn from(s: &str) -> Self {
+        PointerKind::Object(s.to_owned())
+    }
+}
+
+impl std::fmt::Display for PointerKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            PointerKind::Array(u) => write!(f, "{}", u),
+            PointerKind::Object(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+// #[derive(Debug)]
+// pub struct PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     list: Vec<D>,
+//     split: S,
+// }
+
+// impl<D, S> PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     pub fn new(list: Vec<D>, split: S) -> Self {
+//         Self { list, split }
+//     }
+
+//     pub fn push(&mut self, item: D) {
+//         self.list.push(item)
+//     }
+
+//     pub fn pop(&mut self) -> Option<D> {
+//         self.list.pop()
+//     }
+// }
+
+// impl<D, S> AsRef<Vec<D>> for PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     fn as_ref(&self) -> &Vec<D> {
+//         &self.list
+//     }
+// }
+
+// impl<D, S> AsMut<Vec<D>> for PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     fn as_mut(&mut self) -> &mut Vec<D> {
+//         &mut self.list
+//     }
+// }
+
+// impl<D, S> std::fmt::Display for PointerStack<D, S>
+// where
+//     D: std::fmt::Display,
+//     S: std::fmt::Display,
+// {
+//     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+//         write!(f, "{}", self.split)?;
+//         for (_, last, item) in self.list.iter().identify_first_last() {
+//             if !last {
+//                 write!(f, "{}{}", item, self.split)?;
+//             } else {
+//                 write!(f, "{}", item)?;
+//             }
+//         }
+//         Ok(())
+//     }
+// }
 
 // pub fn parse_json(&'j mut self) {
 //     match self.item.size_hint() {

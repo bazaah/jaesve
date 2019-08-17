@@ -3,13 +3,18 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            assets::{Builder, Field, IdentifyFirstLast, JsonScan, ReadFrom},
+            assets::{
+                Builder, Field, IdentifyFirstLast, JsonScan, ReadFrom,
+            },
             error::{ErrorKind, Result},
         },
     },
     std::{
         fs::{File, OpenOptions},
-        io::{stdin as cin, stdout as cout, Read as ioRead, Result as ioResult, Write as ioWrite},
+        io::{
+            stdin as cin, stdout as cout, BufReader, Read as ioRead, Result as ioResult,
+            Write as ioWrite,
+        },
         path::PathBuf,
         str::from_utf8,
         sync::mpsc::SyncSender,
@@ -86,58 +91,129 @@ pub fn set_reader(src: &Option<ReadFrom>) -> Box<dyn ioRead + Send> {
     }
 }
 
+pub(crate) fn unwind_json<R>(
+    opts: &ProgramArgs,
+    ident: usize,
+    src: R,
+    tx_builder: SyncSender<(usize, String, Vec<u8>)>,
+) -> Result<()>
+where
+    R: ioRead,
+{
+    debug!("Started parsing a JSON doc");
+    let mut scanner = JsonScan::new(BufReader::new(src).bytes());
+
+    loop {
+        match scanner.peak() {
+            Some(Ok(b'[')) => {
+                scanner.discard();
+                unwind_json_internal(
+                    opts,
+                    ident,
+                    &mut scanner,
+                    String::default(),
+                    tx_builder.clone(),
+                    Some(b'['),
+                )?;
+                continue;
+            }
+            Some(Ok(b'{')) => {
+                scanner.discard();
+                unwind_json_internal(
+                    opts,
+                    ident,
+                    &mut scanner,
+                    String::default(),
+                    tx_builder.clone(),
+                    Some(b'{'),
+                )?;
+                continue;
+            }
+            Some(Ok(b'-')) | Some(Ok(b'0'..=b'9')) => unimplemented!(),
+            Some(Ok(b'n')) => unimplemented!(),
+            Some(Ok(b't')) | Some(Ok(b'f')) => unimplemented!(),
+            Some(Ok(b'"')) => unimplemented!(),
+            Some(res) => match res {
+                Ok(_) => {
+                    scanner.next();
+                    continue;
+                }
+                Err(_) => return Err(scanner.return_error()),
+            },
+            None => break,
+        }
+    }
+
+    debug!("Finished parsing a JSON doc");
+    Ok(())
+}
 /// Recursively unwinds a JSON data stream
 /// sending the pieces to a builder thread
 // This function does not check if the stream is valid JSON,
 // if it isn't the deserializer will catch it,
 // but the error it emits might be cryptic depending on
 // how badly this function mangled it
-pub(crate) fn unwind_json<I>(
+pub(crate) fn unwind_json_internal<I>(
     opts: &ProgramArgs,
     object_ident: usize,
     scanner: &mut JsonScan<I>,
-    tx_builder: SyncSender<(usize, Option<Vec<u8>>, Vec<u8>)>,
+    jptr_stack: String,
+    tx_builder: SyncSender<(usize, String, Vec<u8>)>,
     prefix_byte: Option<u8>,
-    name_slice: Option<Vec<u8>>,
 ) -> Result<()>
 where
     I: Iterator<Item = ioResult<u8>>,
 {
-    debug!("Started parsing a JSON object/array");
     // Handle the '{' or '[' byte that the outside function might have
     let mut buffer: Vec<u8> = match prefix_byte {
-        Some(b) => vec![b],
+        Some(byte) => vec![byte],
         None => Vec::new(),
     };
-    trace!(
-        "BEFORE: ({:?}, {:?})",
-        &name_slice.as_ref().map(|bv| from_utf8(bv)),
-        from_utf8(&buffer)
-    );
+    let mut array_count = 0usize;
+    trace!("BEFORE: ({}, {:?})", &*jptr_stack, from_utf8(&buffer));
     loop {
         match scanner.next() {
             Some(Ok(b @ b'[')) if scanner.outside_quotes() => {
-                unwind_json(
+                unwind_json_internal(
                     opts,
                     object_ident,
                     scanner,
+                    match prefix_byte {
+                        Some(b'[') => format!("{}/{}", jptr_stack, array_count),
+                        Some(b'{') => format!(
+                            "{}/{}",
+                            jptr_stack,
+                            from_utf8(calculate_key(&buffer, scanner.offsets()).as_slice())
+                                .map_err(|_| ErrorKind::Generic)?
+                        ),
+                        _ => unreachable!(),
+                    },
                     tx_builder.clone(),
                     Some(b),
-                    get_matching_key(&buffer, scanner.offsets()),
                 )?;
+                array_count += 1;
                 &mut buffer.push(b);
                 // Recursive call above eats the corresponding ']' replace it, creating an empty array
                 &mut buffer.push(b']');
                 continue;
             }
             Some(Ok(b @ b'{')) if scanner.outside_quotes() => {
-                unwind_json(
+                unwind_json_internal(
                     opts,
                     object_ident,
                     scanner,
+                    match prefix_byte {
+                        Some(b'[') => format!("{}/{}", jptr_stack, array_count),
+                        Some(b'{') => format!(
+                            "{}/{}",
+                            jptr_stack,
+                            from_utf8(calculate_key(&buffer, scanner.offsets()).as_slice())
+                                .map_err(|_| ErrorKind::Generic)?
+                        ),
+                        _ => unreachable!(),
+                    },
                     tx_builder.clone(),
                     Some(b),
-                    get_matching_key(&buffer, scanner.offsets()),
                 )?;
                 &mut buffer.push(b);
                 // Recursive call above eats the corresponding '}' replace it, creating an empty map
@@ -157,41 +233,39 @@ where
         }
     }
 
-    trace!(
-        "AFTER: ({:?}, {:?})",
-        &name_slice.as_ref().map(|bv| from_utf8(bv)),
-        from_utf8(&buffer)
-    );
+    trace!("AFTER: ({}, {:?})", &*jptr_stack, from_utf8(&buffer));
 
     tx_builder
-        .send((object_ident, name_slice, buffer))
+        .send((object_ident, format!("{}", &*jptr_stack), buffer))
         .map_err(|_| {
             ErrorKind::UnexpectedChannelClose(format!(
                 "builder in |reader -> builder| channel has hung up"
             ))
         })?;
 
+    //jptr_stack.pop();
+
     drop(tx_builder);
-    debug!("Finished parsing a JSON object/array");
     Ok(())
 }
 
 /// Helper function for finding the key
 /// of the JSON object being unwound
-fn get_matching_key(buffer: &Vec<u8>, offsets: (usize, usize)) -> Option<Vec<u8>> {
+fn calculate_key(buffer: &Vec<u8>, offsets: (usize, usize)) -> Vec<u8> {
     let (in_quotes, out_quotes) = offsets;
     let mut key: Vec<_> = buffer
         .iter()
         .rev()
-        .skip(out_quotes - 1)
-        .take(in_quotes + 2)
+        .skip(out_quotes)
+        .take(in_quotes)
         .copied()
         .collect();
     key.reverse();
 
+    // TODO: Add variant for UTF8 err
     trace!("KEY: {:?}", from_utf8(&key));
 
-    Some(key)
+    key
 }
 
 pub fn write_formatted_output<B, W>(w: &mut W, blocks: B, blueprint: &[Field]) -> Result<()>

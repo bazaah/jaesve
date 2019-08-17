@@ -26,7 +26,7 @@ pub(crate) fn spawn_workers(
     opts: &'static ProgramArgs,
     from_source: Receiver<Box<dyn ioRead + Send>>,
 ) -> Result<JoinHandle<Result<()>>> {
-    type ToBuilder = (usize, Option<Vec<u8>>, Vec<u8>);
+    type ToBuilder = (usize, String, Vec<u8>);
     type ToWriter = Output;
 
     // Meta channel: |Reader -> Builder|, delivers new receivers to builder
@@ -85,9 +85,9 @@ pub(crate) fn spawn_workers(
 
                     for packet in channel.iter() {
                         trace!(
-                            "current packet is: {}, {:?}, {:?}",
+                            "current packet is: {}, {}, {:?}",
                             &packet.0,
-                            &packet.1.as_ref().map(|bv| from_utf8(bv)),
+                            &packet.1,
                             from_utf8(&packet.2)
                         );
                         let (json, metadata) = JsonPacket::try_from(packet)?.into_inner();
@@ -156,10 +156,9 @@ pub(crate) fn spawn_workers(
                             "failed to send next |reader -> builder| channel, builder has hung up"
                         ))
                     })?;
-                    let mut scanner = JsonScan::new(BufReader::new(src).bytes());
 
                     debug!("Entering unwind_json calls");
-                    unwind_json(&opts, index, &mut scanner, data_tx, None, None)?;
+                    unwind_json(&opts, index, src, data_tx)?;
                 }
                 Ok(())
             };
