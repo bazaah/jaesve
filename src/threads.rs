@@ -4,11 +4,12 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            assets::{JsonPacket, JsonPointer, JsonScan, Output},
+            assets::{JsonPacket, JsonPointer, ReadKind},
             error::{ErrorKind, Result},
-            get_writer, unwind_json, write_formatted_output,
+            get_writer, unwind_json, write_formatted_output, ToBuilder, ToWriter,
         },
     },
+    linereader::LineReader,
     std::{
         convert::TryFrom,
         io::{BufReader, BufWriter, Read as ioRead},
@@ -18,17 +19,14 @@ use {
     },
 };
 
-// Spawns workers and the channels which communicate input segments.
-// Each input source "from_source" is assigned a new channel, and said channel's
-// rx sent through the "meta channels." This implementation ensures that the control
-// flow mirrors the data flow
+/// Spawns workers and the channels which communicate input segments.
+/// Each input source "from_source" is assigned a new channel, and said channel's
+/// rx sent through the "meta channels." This implementation ensures that the control
+/// flow mirrors the data flow
 pub(crate) fn spawn_workers(
     opts: &'static ProgramArgs,
-    from_source: Receiver<Box<dyn ioRead + Send>>,
+    from_source: Receiver<ReadKind>,
 ) -> Result<JoinHandle<Result<()>>> {
-    type ToBuilder = (usize, String, Vec<u8>);
-    type ToWriter = Output;
-
     // Meta channel: |Reader -> Builder|, delivers new receivers to builder
     let (ReBu_tx, ReBu_rx): (
         SyncSender<Receiver<ToBuilder>>,
@@ -96,16 +94,16 @@ pub(crate) fn spawn_workers(
                         for item in builder {
                             trace!("current in-processing output item is: {:?}", &item);
                             data_tx
-                                .send(item.delim(opts.delimiter()).done())
+                                .send(item.delim(opts.delimiter()).guard(opts.guard()).done())
                                 .map_err(|_| {
                                     ErrorKind::UnexpectedChannelClose(format!(
                                         "writer in |builder -> writer| channel has hung up"
                                     ))
                                 })?;
                         }
-                        debug!("Finished an output item in builder");
+                        debug!("Finished processing a json pointer");
                     }
-                    debug!("Finished with a rdr -> bldr channel");
+                    debug!("Finished processing a json document");
                 }
                 Ok(())
             };
@@ -148,7 +146,7 @@ pub(crate) fn spawn_workers(
 
             let result = || -> Result<()> {
                 // Hot loop
-                while let Some((index, src)) = from_source.iter().enumerate().next() {
+                for item in from_source.iter().enumerate() {
                     let (data_tx, data_rx): (SyncSender<ToBuilder>, Receiver<ToBuilder>) =
                         syncQueue(10);
                     tx_builder.send(data_rx).map_err(|_| {
@@ -156,10 +154,25 @@ pub(crate) fn spawn_workers(
                             "failed to send next |reader -> builder| channel, builder has hung up"
                         ))
                     })?;
-
-                    debug!("Entering unwind_json calls");
-                    unwind_json(&opts, index, src, data_tx)?;
+                    match item {
+                        (i, read @ ReadKind::Stdin(_)) if opts.by_line() => {
+                            let mut read_line = LineReader::new(read.into_inner());
+                            let mut index = 1;
+                            while let Some(slice) = read_line.next_line() {
+                                debug!("Processing line {} of input {}...", index, i);
+                                let reader = slice?.iter().map(|&b| Ok(b));
+                                unwind_json(&opts, index, reader, data_tx.clone())?;
+                                index += 1;
+                            }
+                        }
+                        (index, read @ _) => {
+                            debug!("Processing input {}...", index);
+                            let reader = BufReader::new(read.into_inner()).bytes();
+                            unwind_json(&opts, index, reader, data_tx)?;
+                        }
+                    }
                 }
+
                 Ok(())
             };
             // Cleanup
