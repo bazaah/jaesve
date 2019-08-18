@@ -43,9 +43,23 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                 .short("s")
                 .long("delim")
                 .takes_value(true)
-                .value_name("DELIMITER")
+                .value_name("STRING")
                 .default_value(",")
                 .help("Sets delimiter between output fields"),
+        )
+        .arg(
+            Arg::with_name("guard")
+            .short("g")
+            .long("guard")
+            .takes_value(true)
+            .default_value("\"")
+            .value_name("CHAR")
+            .validator(|c| match c.parse::<char>() {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(format!("Couldn't parse '{}' into a char: {}", c, e))
+                }
+            )
+            .help("Set field quote character")
         )
         .arg(Arg::with_name("type")
             .short("t")
@@ -81,13 +95,13 @@ pub fn generate_cli<'a>() -> Matches<'a> {
         )
         .arg(
             Arg::with_name("input")
-                .short("i")
-                .long("input")
                 .value_name("FILE")
                 .takes_value(true)
                 .multiple(true)
-                .require_delimiter(true)
-                .help("Input file path(s) separated by commas, with a '-' representing stdin"),
+                .allow_hyphen_values(true)
+                .value_terminator(":")
+                .help("Input file path(s) with a '-' representing stdin, MUST be terminated by a ':'")
+                .long_help("Input file path(s) with a '-' representing stdin, MUST be terminated by a ':'... i.e 'file1 file2 - file3 :")
         )
         .arg(
             Arg::with_name("output")
@@ -111,7 +125,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                         Err(e) => Err(format!("{}", e))
                     }
                 })
-                .help("A dot ('.') separated list of identifiers describing how output is formatted")
+                .help("A dot '.' separated list of identifiers describing how output is formatted")
         )
         .get_matches();
 
@@ -121,6 +135,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
 pub struct ProgramArgs {
     show_type: bool,
     delimiter: Delimiter,
+    guard: Delimiter,
     debug_level: LevelFilter,
     by_line: bool,
     regex: Option<RegexOptions>,
@@ -140,13 +155,18 @@ impl<'a> ProgramArgs {
         };
 
         let reader = match store.values_of("input") {
-            Some(inputs) => {
-                let mut list: Vec<_> = inputs.collect();
-                list.dedup_by_key(|f| *f == "-");
-                list.iter()
-                    .map(|s| get_reader(Some(s)))
-                    .collect::<Vec<Option<ReadFrom>>>()
-            }
+            Some(inputs) => inputs
+                .scan(false, |acc, item| match item {
+                    "-" if *acc => Some((*acc, item)),
+                    "-" => {
+                        *acc = true;
+                        Some((false, item))
+                    }
+                    _ => Some((false, item)),
+                })
+                .filter(|(dupe, _)| !dupe)
+                .map(|(_, s)| get_reader(Some(s)))
+                .collect::<Vec<Option<ReadFrom>>>(),
             None => {
                 let mut vec: Vec<Option<ReadFrom>> = Vec::new();
                 let i = get_reader(None);
@@ -193,9 +213,15 @@ impl<'a> ProgramArgs {
             _ => panic!("delimiter missing"),
         };
 
+        let guard: Delimiter = match store.value_of("guard") {
+            Some(c) => c.into(),
+            _ => unreachable!("guard missing"),
+        };
+
         Self {
             show_type,
             delimiter,
+            guard,
             debug_level,
             by_line,
             regex,
@@ -217,8 +243,16 @@ impl<'a> ProgramArgs {
         &self.writer
     }
 
+    pub fn by_line(&self) -> bool {
+        self.by_line
+    }
+
     pub fn delimiter(&self) -> Delimiter {
         self.delimiter.clone()
+    }
+
+    pub fn guard(&self) -> Delimiter {
+        self.guard.clone()
     }
 
     pub fn format(&self) -> &[Field] {
