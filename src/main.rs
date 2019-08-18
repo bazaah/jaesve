@@ -1,4 +1,4 @@
-#![feature(termination_trait_lib, try_trait)]
+#![feature(termination_trait_lib, try_trait, bind_by_move_pattern_guards)]
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -8,6 +8,7 @@ use {
     crate::{
         cli::{generate_cli, ProgramArgs},
         models::{
+            assets::ReadKind,
             error::{ErrorKind, ProgramExit},
             set_reader,
         },
@@ -38,17 +39,14 @@ fn main() -> ProgramExit<ErrorKind> {
     // Channel for sending open input streams (stdin/file handles)
     // number controls how many shall be open at any given time,
     // counting from 0 (i.e: 0 -> 1, 1 -> 2, etc)
-    let (tx, rx): (
-        SyncSender<Box<dyn ioRead + Send>>,
-        Receiver<Box<dyn ioRead + Send>>,
-    ) = syncQueue(1);
+    let (tx, rx): (SyncSender<ReadKind>, Receiver<ReadKind>) = syncQueue(1);
 
     // Instantiates worker threads
     let reader = spawn_workers(&CLI, rx)?;
 
     // Hot loop
     for source in CLI.reader_list() {
-        let read_from: Box<dyn ioRead + Send> = set_reader(source);
+        let read_from: ReadKind = set_reader(source);
         tx.send(read_from).map_err(|_| {
             ErrorKind::UnexpectedChannelClose(format!(
                 "reader in |main -> reader| channel has hung up"
