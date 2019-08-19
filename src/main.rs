@@ -15,10 +15,7 @@ use {
         threads::spawn_workers,
     },
     simplelog::*,
-    std::{
-        io::Read as ioRead,
-        sync::mpsc::{sync_channel as syncQueue, Receiver, SyncSender},
-    },
+    std::sync::mpsc::{sync_channel as syncQueue, Receiver, SyncSender},
 };
 
 mod cli;

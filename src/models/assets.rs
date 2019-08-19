@@ -12,7 +12,7 @@ use {
         convert::TryFrom,
         error::Error,
         fs::File,
-        io::{Read as ioRead, Result as ioResult, Stdin, Write as ioWrite},
+        io::{Read as ioRead, Result as ioResult, Stdin},
         path::PathBuf,
         str::{from_utf8, FromStr},
     },
@@ -328,6 +328,23 @@ impl From<&str> for Field {
     }
 }
 
+// TODO: Investigate negative trait bounds
+// impl TryFrom<&str> for Field {
+//     type Error = ErrorKind;
+
+//     fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
+//         match s {
+//             "ident" => Ok(Field::Identifier),
+//             "delim" => Ok(Field::Delimiter),
+//             "grd"   => Ok(Field::Guard),
+//             "type" => Ok(Field::Type),
+//             "jptr" => Ok(Field::Pointer),
+//             "value" => Ok(Field::Value),
+//             _ => Err(ErrorKind::Generic),
+//         }
+//     }
+// }
+
 impl Default for Field {
     fn default() -> Self {
         Field::Pointer
@@ -402,7 +419,6 @@ impl std::fmt::Display for Delimiter {
 
 pub struct JsonScan<I> {
     iter: I,
-    ch: Option<ioResult<u8>>,
     prev: Option<u8>,
     state: ScanState,
     /// (InQuotes, OutQuotes)
@@ -416,7 +432,6 @@ where
     pub fn new(iter: I) -> JsonScan<I> {
         JsonScan {
             iter,
-            ch: None,
             prev: None,
             state: ScanState::OutQuotes,
             offsets: (0, 0),
@@ -432,44 +447,6 @@ where
 
     pub fn offsets(&self) -> (usize, usize) {
         self.offsets
-    }
-
-    pub fn peak(&mut self) -> Option<&ioResult<u8>> {
-        match self.ch {
-            Some(ref ok @ Ok(_)) => Some(&ok),
-            Some(ref err @ Err(_)) => Some(&err),
-            None => match self.iter.next() {
-                ch @ Some(_) => {
-                    self.ch = ch;
-                    self.ch.as_ref()
-                }
-                None => None,
-            },
-        }
-    }
-
-    pub fn discard(&mut self) {
-        self.ch = None
-    }
-
-    pub fn return_error(self) -> ErrorKind {
-        match self.ch.unwrap() {
-            Err(e) => e.into(),
-            _ => panic!("this should never happen"),
-        }
-    }
-
-    fn internal_next(&mut self) -> Option<ioResult<u8>> {
-        match self.ch.take() {
-            ch @ Some(_) => ch,
-            None => match self.iter.next() {
-                ch @ Some(_) => {
-                    self.ch = ch;
-                    self.internal_next()
-                }
-                None => None,
-            },
-        }
     }
 
     fn handle_state(&mut self) {
@@ -503,7 +480,7 @@ where
     type Item = ioResult<u8>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.internal_next() {
+        match self.iter.next() {
             Some(Ok(b @ b'"')) => {
                 self.handle_state();
                 //self.offset(); Should starting a new offset be 0 or 1?

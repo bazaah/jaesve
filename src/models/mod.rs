@@ -9,10 +9,7 @@ use {
     },
     std::{
         fs::{File, OpenOptions},
-        io::{
-            stdin as cin, stdout as cout, BufReader, Read as ioRead, Result as ioResult,
-            Write as ioWrite,
-        },
+        io::{stdin as cin, stdout as cout, Result as ioResult, Write as ioWrite},
         path::PathBuf,
         str::from_utf8,
         sync::mpsc::SyncSender,

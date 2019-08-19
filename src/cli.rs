@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use {
     crate::{
         match_with_log,
@@ -77,10 +78,11 @@ pub fn generate_cli<'a>() -> Matches<'a> {
             .value_name("PATTERN")
             .takes_value(true)
             .validator(|regex| {
-                match Regex::new(&regex) {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(format!("{}", e))
-                }
+                // match Regex::new(&regex) {
+                //     Ok(_) => Ok(()),
+                //     Err(e) => Err(format!("{}", e))
+                // }
+                Err(format!("Feature 'regex' currently disabled"))
             })
             .help("Set a regex to filter output")
         )
@@ -196,7 +198,7 @@ impl<'a> ProgramArgs {
                 (None, _) => None,
             };
 
-        // Unwrap is safe because of default value set in clap
+        // Unwrap is safe because of default value set + validated by clap
         let format: Vec<Field> = store
             .value_of("format")
             .unwrap()
