@@ -1,16 +1,12 @@
 #![allow(deprecated)]
 use {
-    crate::{
-        match_with_log,
-        models::{
-            assets::{Delimiter, Field, ReadFrom, RegexOptions},
-            get_reader,
-        },
+    crate::models::{
+        assets::{Delimiter, Field, ReadFrom, RegexOptions},
+        get_reader,
     },
     clap::{crate_authors, crate_version, App, Arg, ArgMatches as Matches},
     regex::Regex,
     simplelog::LevelFilter,
-    std::convert::TryFrom,
 };
 
 pub fn generate_cli<'a>() -> Matches<'a> {
@@ -32,6 +28,11 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                 .takes_value(false)
                 .help("Silences error messages")
         )
+        .arg(Arg::with_name("line")
+            .short("l")
+            .long("line")
+            .help("Set stdin to read a JSON string from each line")
+        )
         .arg(Arg::with_name("append")
                 .short("a")
                 .long("append")
@@ -41,7 +42,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
         )
         .arg(
             Arg::with_name("delimiter")
-                .short("s")
+                .short("d")
                 .long("delim")
                 .takes_value(true)
                 .value_name("STRING")
@@ -62,27 +63,16 @@ pub fn generate_cli<'a>() -> Matches<'a> {
             )
             .help("Set field quote character")
         )
-        .arg(Arg::with_name("type")
-            .short("t")
-            .long("type")
-            .help("Print without json object type")
-        )
-        .arg(Arg::with_name("line")
-            .short("l")
-            .long("line")
-            .help("Set stdin to read a JSON string from each line")
-        )
         .arg(Arg::with_name("regex")
             .short("E")
             .long("regex")
             .value_name("PATTERN")
             .takes_value(true)
             .validator(|regex| {
-                // match Regex::new(&regex) {
-                //     Ok(_) => Ok(()),
-                //     Err(e) => Err(format!("{}", e))
-                // }
-                Err(format!("Feature 'regex' currently disabled"))
+                match Regex::new(&regex) {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(format!("{}", e))
+                }
             })
             .help("Set a regex to filter output")
         )
@@ -90,9 +80,10 @@ pub fn generate_cli<'a>() -> Matches<'a> {
             .short("c")
             .long("column")
             .takes_value(true)
-            .value_name("TYPE")
+            .value_name("STRING")
             .requires("regex")
-            .possible_values(&["jptr", "type", "value", "delim"])
+            .default_value_if("regex", None, Field::Pointer.into())
+            .possible_values(&[Field::Identifier.into(), Field::Pointer.into(), Field::Type.into(), Field::Value.into()])
             .help("Sets column to match regex on")
         )
         .arg(
@@ -119,15 +110,20 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                 .long("format")
                 .value_name("STRING")
                 .takes_value(true)
+                // TODO: Figure out to pass &str made from Fields
                 .default_value("ident.jptr.type.value")
                 .validator(|fmt| {
-                    let res: Result<Vec<_>, _> = fmt.split(".").map(|sub| Field::try_from(sub)).collect();
+                    let res: Result<Vec<_>, _> = fmt.split(".").map(|sub| Field::try_from_whitelist(
+                            sub,
+                            &[Field::Identifier, Field::Pointer, Field::Type, Field::Value]
+                        )
+                    ).collect();
                     match res {
                         Ok(_) => Ok(()),
                         Err(e) => Err(format!("{}", e))
                     }
                 })
-                .help("A dot '.' separated list of identifiers describing how output is formatted")
+                .help("A dot '.' separated list of fields describing how output is formatted")
         )
         .get_matches();
 
@@ -135,7 +131,6 @@ pub fn generate_cli<'a>() -> Matches<'a> {
 }
 
 pub struct ProgramArgs {
-    show_type: bool,
     delimiter: Delimiter,
     guard: Delimiter,
     debug_level: LevelFilter,
@@ -183,21 +178,6 @@ impl<'a> ProgramArgs {
             (None, _) => (None, false),
         };
 
-        let regex: Option<RegexOptions> =
-            match (store.value_of("regex"), store.value_of("regex_column")) {
-                (Some(_), Some(column))
-                    if store.is_present("type") && Field::from(column) == Field::Type =>
-                {
-                    match_with_log!(
-                        None,
-                        warn!("Attempting to regex nonexistent field: 'type', ignoring...")
-                    )
-                }
-                (Some(pattern), Some(column)) => Some(RegexOptions::new(pattern, column.into())),
-                (Some(pattern), None) => Some(RegexOptions::new(pattern, Field::default())),
-                (None, _) => None,
-            };
-
         // Unwrap is safe because of default value set + validated by clap
         let format: Vec<Field> = store
             .value_of("format")
@@ -206,9 +186,18 @@ impl<'a> ProgramArgs {
             .map(|sub| Field::from(sub))
             .collect();
 
-        let by_line = store.is_present("line");
+        let regex: Option<RegexOptions> =
+            match (store.value_of("regex"), store.value_of("regex_column")) {
+                // Checks to make sure 'column' is being used in the output
+                (Some(_), Some(column)) if Field::try_from_whitelist(column, &format).is_err() => {
+                    None
+                }
+                (Some(pattern), Some(column)) => Some(RegexOptions::new(pattern, column.into())),
+                (Some(_), None) => unreachable!("Default value supplied by clap"),
+                (None, _) => None,
+            };
 
-        let show_type = !store.is_present("type");
+        let by_line = store.is_present("line");
 
         let delimiter: Delimiter = match store.value_of("delimiter") {
             Some(s) => s.into(),
@@ -221,7 +210,6 @@ impl<'a> ProgramArgs {
         };
 
         Self {
-            show_type,
             delimiter,
             guard,
             debug_level,
@@ -259,5 +247,9 @@ impl<'a> ProgramArgs {
 
     pub fn format(&self) -> &[Field] {
         &self.format
+    }
+
+    pub fn regex(&self) -> Option<&RegexOptions> {
+        self.regex.as_ref()
     }
 }
