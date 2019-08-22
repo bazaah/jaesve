@@ -8,11 +8,12 @@ use {
         },
     },
     std::{
-        collections::VecDeque,
+        collections::{hash_map::RandomState, HashSet, VecDeque},
         convert::TryFrom,
-        error::Error,
+        fmt::Write as fmtWrite,
         fs::File,
         io::{Read as ioRead, Result as ioResult, Stdin},
+        iter::FromIterator,
         path::PathBuf,
         str::{from_utf8, FromStr},
     },
@@ -69,21 +70,21 @@ where
     D: Into<Field>,
 {
     type Block: std::fmt::Display;
-    type Error: Error;
+    type Error;
 
-    fn build_with(&self, d: D) -> Result<Self::Block, Box<dyn self::Error>>;
+    fn build_with(&self, d: D) -> Result<Self::Block, Self::Error>;
 
-    fn identifer(&self) -> Result<Self::Block, Box<dyn self::Error>>;
+    fn identifer(&self) -> Result<Self::Block, Self::Error>;
 
-    fn delimiter(&self) -> Result<Self::Block, Box<dyn self::Error>>;
+    fn delimiter(&self) -> Result<Self::Block, Self::Error>;
 
-    fn guard(&self) -> Result<Self::Block, Box<dyn self::Error>>;
+    fn guard(&self) -> Result<Self::Block, Self::Error>;
 
-    fn type_of(&self) -> Result<Self::Block, Box<dyn self::Error>>;
+    fn type_of(&self) -> Result<Self::Block, Self::Error>;
 
-    fn pointer(&self) -> Result<Self::Block, Box<dyn self::Error>>;
+    fn pointer(&self) -> Result<Self::Block, Self::Error>;
 
-    fn value(&self) -> Result<Self::Block, Box<dyn self::Error>>;
+    fn value(&self) -> Result<Self::Block, Self::Error>;
 }
 
 #[derive(Debug)]
@@ -164,38 +165,52 @@ where
 {
     type Block = BlockKind;
     type Error = ErrorKind;
-    fn build_with(&self, d: D) -> Result<Self::Block, Box<dyn self::Error>> {
+    fn build_with(&self, d: D) -> Result<Self::Block, Self::Error> {
         match d.into() {
-            Field::Identifier => self.get_ident().ok_or(Box::new(ErrorKind::Generic)),
-            Field::Type => self.get_type().ok_or(Box::new(ErrorKind::Generic)),
-            Field::Pointer => self.get_pointer().ok_or(Box::new(ErrorKind::Generic)),
-            Field::Value => self.get_value().ok_or(Box::new(ErrorKind::Generic)),
-            _ => Err(Box::new(ErrorKind::Generic)),
+            f @ Field::Identifier => self
+                .get_ident()
+                .ok_or(ErrorKind::MissingField(format!("{}", f))),
+            f @ Field::Type => self
+                .get_type()
+                .ok_or(ErrorKind::MissingField(format!("{}", f))),
+            f @ Field::Pointer => self
+                .get_pointer()
+                .ok_or(ErrorKind::MissingField(format!("{}", f))),
+            f @ Field::Value => self
+                .get_value()
+                .ok_or(ErrorKind::MissingField(format!("{}", f))),
+            _ => unreachable!("Make sure clap only allows valid fields to hit this"),
         }
     }
 
-    fn identifer(&self) -> Result<Self::Block, Box<dyn self::Error>> {
-        self.get_ident().ok_or(Box::new(ErrorKind::Generic))
+    fn identifer(&self) -> Result<Self::Block, Self::Error> {
+        self.get_ident()
+            .ok_or(ErrorKind::MissingField(format!("{}", Field::Identifier)))
     }
 
-    fn delimiter(&self) -> Result<Self::Block, Box<dyn self::Error>> {
-        self.get_delimiter().ok_or(Box::new(ErrorKind::Generic))
+    fn delimiter(&self) -> Result<Self::Block, Self::Error> {
+        self.get_delimiter()
+            .ok_or(ErrorKind::MissingField(format!("{}", Field::Delimiter)))
     }
 
-    fn guard(&self) -> Result<Self::Block, Box<dyn self::Error>> {
-        self.get_guard().ok_or(Box::new(ErrorKind::Generic))
+    fn guard(&self) -> Result<Self::Block, Self::Error> {
+        self.get_guard()
+            .ok_or(ErrorKind::MissingField(format!("{}", Field::Guard)))
     }
 
-    fn type_of(&self) -> Result<Self::Block, Box<dyn self::Error>> {
-        self.get_type().ok_or(Box::new(ErrorKind::Generic))
+    fn type_of(&self) -> Result<Self::Block, Self::Error> {
+        self.get_type()
+            .ok_or(ErrorKind::MissingField(format!("{}", Field::Type)))
     }
 
-    fn pointer(&self) -> Result<Self::Block, Box<dyn self::Error>> {
-        self.get_pointer().ok_or(Box::new(ErrorKind::Generic))
+    fn pointer(&self) -> Result<Self::Block, Self::Error> {
+        self.get_pointer()
+            .ok_or(ErrorKind::MissingField(format!("{}", Field::Pointer)))
     }
 
-    fn value(&self) -> Result<Self::Block, Box<dyn self::Error>> {
-        self.get_value().ok_or(Box::new(ErrorKind::Generic))
+    fn value(&self) -> Result<Self::Block, Self::Error> {
+        self.get_value()
+            .ok_or(ErrorKind::MissingField(format!("{}", Field::Value)))
     }
 }
 
@@ -251,6 +266,52 @@ impl OutputBuilder {
         self.blocks[5] = Some(BlockKind::Value(val));
         self
     }
+
+    pub fn check(self, regex: Option<&RegexOptions>) -> Option<Self> {
+        match regex {
+            Some(regex) => match regex.on_field() {
+                Field::Identifier => match self.blocks[0] {
+                    Some(BlockKind::Ident(ref i)) if !regex.pattern().is_match(&i.to_string()) => {
+                        None
+                    }
+                    _ => Some(self),
+                },
+                Field::Delimiter => match self.blocks[1] {
+                    Some(BlockKind::Delimiter(ref d))
+                        if !regex.pattern().is_match(&d.to_string()) =>
+                    {
+                        None
+                    }
+                    _ => Some(self),
+                },
+                Field::Guard => match self.blocks[2] {
+                    Some(BlockKind::Guard(ref g)) if !regex.pattern().is_match(&g.to_string()) => {
+                        None
+                    }
+                    _ => Some(self),
+                },
+                Field::Type => match self.blocks[3] {
+                    Some(BlockKind::Type(ref t)) if !regex.pattern().is_match(&t.to_string()) => {
+                        None
+                    }
+                    _ => Some(self),
+                },
+                Field::Pointer => match &self.blocks[4] {
+                    Some(BlockKind::Pointer(ref p)) if !regex.pattern().is_match(p) => None,
+                    _ => Some(self),
+                },
+                Field::Value => match self.blocks[5] {
+                    Some(BlockKind::Value(ref o)) => match o {
+                        Some(v) if !regex.pattern().is_match(v) => None,
+                        None => None,
+                        _ => Some(self),
+                    },
+                    _ => Some(self),
+                },
+            },
+            None => Some(self),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -304,7 +365,7 @@ impl std::fmt::Display for JType {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 pub enum Field {
     Identifier,
     Delimiter,
@@ -314,6 +375,57 @@ pub enum Field {
     Value,
 }
 
+impl Field {
+    /// Associated fn emulating TryFrom, workaround
+    /// for the annoying implicit impl deriving from From
+    pub fn try_from(s: &str) -> Result<Self, ErrorKind> {
+        match s {
+            "ident" => Ok(Field::Identifier),
+            "delim" => Ok(Field::Delimiter),
+            "grd" => Ok(Field::Guard),
+            "type" => Ok(Field::Type),
+            "jptr" => Ok(Field::Pointer),
+            "value" => Ok(Field::Value),
+            _ => Err(ErrorKind::Message(format!("'{}' is not a valid field", s))),
+        }
+    }
+
+    /// Convenience wrapper around try_from, further
+    /// restricting the cast to the allowed variants in whitelist
+    pub fn try_from_whitelist(s: &str, whitelist: &[Field]) -> Result<Self, ErrorKind> {
+        let res = Field::try_from(s)?;
+
+        match HashSet::<&Field, RandomState>::from_iter(whitelist).contains(&res) {
+            true => Ok(res),
+            false => Err(ErrorKind::Message(format!(
+                "'{}' is not a valid field: {}",
+                s,
+                Field::print_slice(whitelist)?
+            ))),
+        }
+    }
+
+    /// Private display impl to avoid unnecessary foreign wrappers
+    fn print_slice(slice: &[Field]) -> Result<String, ErrorKind> {
+        let mut buffer = String::with_capacity(slice.len() * 6);
+        let iter = slice.iter().identify_first_last();
+        for item in iter {
+            match item {
+                (true, _, field) => write!(&mut buffer, "['{}' ", field)
+                    .map_err(|e| ErrorKind::Message(format!("{}", e)))?,
+                (_, true, field) => write!(&mut buffer, "'{}']", field)
+                    .map_err(|e| ErrorKind::Message(format!("{}", e)))?,
+                (false, false, field) => write!(&mut buffer, "{} ", field)
+                    .map_err(|e| ErrorKind::Message(format!("{}", e)))?,
+            }
+        }
+
+        Ok(buffer)
+    }
+}
+
+// Unchecked conversion, should only be used on
+// otherwise validated conversions
 impl From<&str> for Field {
     fn from(s: &str) -> Self {
         match s {
@@ -323,27 +435,49 @@ impl From<&str> for Field {
             "type" => Field::Type,
             "jptr" => Field::Pointer,
             "value" => Field::Value,
-            _ => panic!("Called infallible conversion to Field on a fallible conversion, use try_from instead"),
+            _ => unreachable!("Called infallible conversion to Field on a fallible conversion, use try_from instead"),
         }
     }
 }
 
-// TODO: Investigate negative trait bounds
-// impl TryFrom<&str> for Field {
-//     type Error = ErrorKind;
+impl From<Field> for &str {
+    fn from(f: Field) -> Self {
+        match f {
+            Field::Identifier => "ident",
+            Field::Delimiter => "delim",
+            Field::Guard => "grd",
+            Field::Type => "type",
+            Field::Pointer => "jptr",
+            Field::Value => "value",
+        }
+    }
+}
 
-//     fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
-//         match s {
-//             "ident" => Ok(Field::Identifier),
-//             "delim" => Ok(Field::Delimiter),
-//             "grd"   => Ok(Field::Guard),
-//             "type" => Ok(Field::Type),
-//             "jptr" => Ok(Field::Pointer),
-//             "value" => Ok(Field::Value),
-//             _ => Err(ErrorKind::Generic),
-//         }
-//     }
-// }
+impl From<BlockKind> for Field {
+    fn from(kind: BlockKind) -> Self {
+        match kind {
+            BlockKind::Ident(_) => Field::Identifier,
+            BlockKind::Delimiter(_) => Field::Delimiter,
+            BlockKind::Guard(_) => Field::Guard,
+            BlockKind::Type(_) => Field::Type,
+            BlockKind::Pointer(_) => Field::Pointer,
+            BlockKind::Value(_) => Field::Value,
+        }
+    }
+}
+
+impl std::fmt::Display for Field {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Field::Identifier => write!(f, "ident"),
+            Field::Delimiter => write!(f, "delim"),
+            Field::Guard => write!(f, "grd"),
+            Field::Type => write!(f, "type"),
+            Field::Pointer => write!(f, "jptr"),
+            Field::Value => write!(f, "value"),
+        }
+    }
+}
 
 impl Default for Field {
     fn default() -> Self {
@@ -351,24 +485,34 @@ impl Default for Field {
     }
 }
 
+/// Contains the regex and the field
+/// upon which to match against
+#[derive(Debug)]
 pub struct RegexOptions {
     regex: regex::Regex,
-    column: Field,
+    field: Field,
 }
 
 impl RegexOptions {
-    pub fn new(pattern: &str, column: Field) -> Self {
+    pub fn new(pattern: &str, field: Field) -> Self {
         // Checked by clap, unwrap here is safe
         let regex = regex::Regex::from_str(pattern).unwrap();
-        RegexOptions { regex, column }
+        RegexOptions { regex, field }
     }
 
-    pub fn get_regex(&self) -> &regex::Regex {
+    pub fn pattern(&self) -> &regex::Regex {
         &self.regex
     }
 
-    pub fn get_column(&self) -> Field {
-        self.column
+    pub fn on_field(&self) -> Field {
+        self.field
+    }
+
+    pub fn on_ident(&self) -> bool {
+        match self.field {
+            Field::Identifier => true,
+            _ => false,
+        }
     }
 }
 
