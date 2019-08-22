@@ -1,17 +1,25 @@
-use std::{error::Error, fmt::Debug, io::Error as ioError, ops::Try, process::Termination};
+use std::{
+    error::Error, fmt::Debug, io::Error as ioError, ops::Try, process::Termination, str::Utf8Error,
+};
 
 pub(crate) type Result<T> = std::result::Result<T, ErrorKind>;
 
+/// Contains any error emitted by this program
 #[derive(Debug)]
 pub enum ErrorKind {
     // Catch all
     Generic,
+    Message(String),
     // Handles in-thread panics
     ThreadFailed(String),
     // Handles fatal channel closes
     UnexpectedChannelClose(String),
     // Wrapper for any IO / Json serde errors
     Io(ioError),
+    // For byte to str casts
+    UTF8(Utf8Error),
+    // Handles missing fields during output streaming
+    MissingField(String),
 }
 
 // 1 => Program failed to correctly execute
@@ -20,10 +28,9 @@ pub enum ErrorKind {
 impl From<ErrorKind> for i32 {
     fn from(err: ErrorKind) -> Self {
         match err {
-            ErrorKind::Generic => 1,
-            ErrorKind::Io(_) => 1,
             ErrorKind::ThreadFailed(_) => 2,
             ErrorKind::UnexpectedChannelClose(_) => 3,
+            _ => 1,
         }
     }
 }
@@ -47,6 +54,12 @@ impl From<serde_json::Error> for ErrorKind {
     }
 }
 
+impl From<Utf8Error> for ErrorKind {
+    fn from(err: Utf8Error) -> Self {
+        ErrorKind::UTF8(err)
+    }
+}
+
 // Option::None => ErrorKind
 impl From<std::option::NoneError> for ErrorKind {
     fn from(_: std::option::NoneError) -> Self {
@@ -56,8 +69,8 @@ impl From<std::option::NoneError> for ErrorKind {
 
 // E => ErrorKind, where E implements Error
 impl From<Box<dyn Error>> for ErrorKind {
-    fn from(_: Box<dyn Error>) -> Self {
-        ErrorKind::Generic
+    fn from(e: Box<dyn Error>) -> Self {
+        ErrorKind::Message(format!("{}", e))
     }
 }
 
@@ -65,21 +78,22 @@ impl std::fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             ErrorKind::Generic => write!(f, "Generic Error"),
+            ErrorKind::Message(m) => write!(f, "{}", m),
             ErrorKind::ThreadFailed(e) => write!(f, "Thread: {} failed to return", e),
             ErrorKind::UnexpectedChannelClose(e) => write!(f, "A channel quit unexpectedly: {}", e),
             ErrorKind::Io(e) => write!(f, "An underlying IO error occurred: {}", e),
+            ErrorKind::UTF8(e) => write!(f, "Invalid or incomplete UTF-8: {}", e),
+            ErrorKind::MissingField(e) => write!(f, "Missing required field: {}", e),
         }
     }
 }
 
 impl Error for ErrorKind {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        // Figure this out later
         match self {
-            ErrorKind::Generic => None,
-            ErrorKind::ThreadFailed(_) => None,
-            ErrorKind::UnexpectedChannelClose(_) => None,
             ErrorKind::Io(e) => Some(e),
+            ErrorKind::UTF8(e) => Some(e),
+            _ => None,
         }
     }
 }
