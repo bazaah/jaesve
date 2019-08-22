@@ -49,6 +49,7 @@ pub(crate) fn spawn_workers(
                 // Hot loop
                 while let Some(channel) = rx_builder.iter().next() {
                     for output in channel.iter() {
+                        trace!("before writing: {:?}", &output);
                         write_formatted_output(&mut writer, output, opts.format())?;
                     }
                     debug!("Write channel closing");
@@ -57,7 +58,7 @@ pub(crate) fn spawn_workers(
             };
             // Cleanup
             match result() {
-                Ok(ok) => match_with_log!(Ok(ok), debug!("Writer closing... success")),
+                Ok(ok) => match_with_log!(Ok(ok), info!("Writer closing... success")),
                 Err(e) => match_with_log!(Err(e), warn!("Writer closing... with error")),
             }
         })?;
@@ -81,7 +82,18 @@ pub(crate) fn spawn_workers(
                         ))
                     })?;
 
-                    for packet in channel.iter() {
+                    for packet in channel
+                        .iter()
+                        .filter_map(|(ident, p, j)| match opts.regex() {
+                            Some(regex) if regex.on_ident() => {
+                                match regex.pattern().is_match(&ident.to_string()) {
+                                    true => Some((ident, p, j)),
+                                    false => None,
+                                }
+                            }
+                            _ => Some((ident, p, j)),
+                        })
+                    {
                         trace!(
                             "current packet is: {}, {}, {:?}",
                             &packet.0,
@@ -91,17 +103,18 @@ pub(crate) fn spawn_workers(
                         let (json, metadata) = JsonPacket::try_from(packet)?.into_inner();
                         let builder = JsonPointer::new(&json, metadata);
 
-                        for item in builder {
+                        for item in builder
+                            .map(|output| output.delim(opts.delimiter()).guard(opts.guard()))
+                            .filter_map(|output| output.check(opts.regex()))
+                        {
                             trace!("current in-processing output item is: {:?}", &item);
-                            data_tx
-                                .send(item.delim(opts.delimiter()).guard(opts.guard()).done())
-                                .map_err(|_| {
-                                    ErrorKind::UnexpectedChannelClose(format!(
-                                        "writer in |builder -> writer| channel has hung up"
-                                    ))
-                                })?;
+                            data_tx.send(item.done()).map_err(|_| {
+                                ErrorKind::UnexpectedChannelClose(format!(
+                                    "writer in |builder -> writer| channel has hung up"
+                                ))
+                            })?;
                         }
-                        debug!("Finished processing a json pointer");
+                        trace!("Finished processing a json pointer");
                     }
                     debug!("Finished processing a json document");
                 }
@@ -129,7 +142,7 @@ pub(crate) fn spawn_workers(
                             ))
                         })??;
                     match defer {
-                        Ok(ok) => match_with_log!(Ok(ok), debug!("Builder closing... success")),
+                        Ok(ok) => match_with_log!(Ok(ok), info!("Builder closing... success")),
                         Err(e) => match_with_log!(Err(e), warn!("Builder closing... with error")),
                     }
                 }
@@ -146,7 +159,7 @@ pub(crate) fn spawn_workers(
 
             let result = || -> Result<()> {
                 // Hot loop
-                for item in from_source.iter().enumerate() {
+                for item in from_source.iter().enumerate().map(|(i, r)| (i + 1, r)) {
                     let (data_tx, data_rx): (SyncSender<ToBuilder>, Receiver<ToBuilder>) =
                         syncQueue(10);
                     tx_builder.send(data_rx).map_err(|_| {
