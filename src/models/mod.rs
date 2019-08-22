@@ -179,8 +179,7 @@ where
                         b'{' => format!(
                             "{}/{}",
                             jptr,
-                            from_utf8(calculate_key(&buffer, scanner.offsets()).as_slice())
-                                .map_err(|_| ErrorKind::Generic)?
+                            from_utf8(calculate_key(&buffer, scanner.offsets()).as_slice())?
                         ),
                         _ => unreachable!(),
                     },
@@ -201,8 +200,7 @@ where
                         b'{' => format!(
                             "{}/{}",
                             jptr,
-                            from_utf8(calculate_key(&buffer, scanner.offsets()).as_slice())
-                                .map_err(|_| ErrorKind::Generic)?
+                            from_utf8(calculate_key(&buffer, scanner.offsets()).as_slice())?
                         ),
                         _ => unreachable!(),
                     },
@@ -282,7 +280,6 @@ fn calculate_key(buffer: &Vec<u8>, offsets: (usize, usize)) -> Vec<u8> {
         .collect();
     key.reverse();
 
-    // TODO: Add variant for UTF8 err
     trace!("KEY: {:?}", from_utf8(&key));
 
     key
@@ -292,6 +289,7 @@ pub fn write_formatted_output<B, W>(w: &mut W, blocks: B, blueprint: &[Field]) -
 where
     B: Builder<Field>,
     W: ioWrite,
+    ErrorKind: From<<B as Builder<Field>>::Error>,
 {
     let iter = blueprint.iter().identify_first_last();
     for (_, last, field) in iter {
