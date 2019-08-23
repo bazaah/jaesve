@@ -3,8 +3,10 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            assets::{Builder, Field, IdentifyFirstLast, JsonScan, Output, ReadFrom, ReadKind},
+            assets::{Field, IdentifyFirstLast, ReadFrom, ReadKind},
+            builder::{Builder, Output},
             error::{ErrorKind, Result},
+            scan::JsonScan,
         },
     },
     std::{
@@ -17,7 +19,9 @@ use {
 };
 
 pub mod assets;
+pub mod builder;
 pub mod error;
+pub mod scan;
 
 /// Type def for the reader -> builder channel
 pub type ToBuilder = (usize, String, Vec<u8>);
