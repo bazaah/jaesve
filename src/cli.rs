@@ -10,7 +10,7 @@ use {
 };
 
 pub fn generate_cli<'a>() -> Matches<'a> {
-    let matches = App::new("jaesve")
+    App::new("jaesve")
         .about("Utility for converting JSON into a CSV-like format")
         .author(crate_authors!("\n"))
         .version(crate_version!())
@@ -117,7 +117,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                 // TODO: Figure out to pass &str made from Fields
                 .default_value("ident.jptr.type.value")
                 .validator(|fmt| {
-                    let res: Result<Vec<_>, _> = fmt.split(".").map(|sub| Field::try_from_whitelist(
+                    let res: Result<Vec<_>, _> = fmt.split('.').map(|sub| Field::try_from_whitelist(
                             sub,
                             &[Field::Identifier, Field::Pointer, Field::Type, Field::Value]
                         )
@@ -129,9 +129,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                 })
                 .help("A dot '.' separated list of fields describing how output is formatted")
         )
-        .get_matches();
-
-    matches
+        .get_matches()
 }
 
 pub struct ProgramArgs {
@@ -186,8 +184,8 @@ impl<'a> ProgramArgs {
         let format: Vec<Field> = store
             .value_of("format")
             .unwrap()
-            .split(".")
-            .map(|sub| Field::from(sub))
+            .split('.')
+            .map(Field::from)
             .collect();
 
         let regex: Option<RegexOptions> =

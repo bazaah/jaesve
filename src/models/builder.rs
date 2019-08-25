@@ -101,19 +101,19 @@ where
             f @ Field::Identifier => self
                 .get_ident()
                 .cloned()
-                .ok_or(ErrorKind::MissingField(format!("{}", f))),
+                .ok_or_else(|| ErrorKind::MissingField(format!("{}", f))),
             f @ Field::Type => self
                 .get_type()
                 .cloned()
-                .ok_or(ErrorKind::MissingField(format!("{}", f))),
+                .ok_or_else(|| ErrorKind::MissingField(format!("{}", f))),
             f @ Field::Pointer => self
                 .get_pointer()
                 .cloned()
-                .ok_or(ErrorKind::MissingField(format!("{}", f))),
+                .ok_or_else(|| ErrorKind::MissingField(format!("{}", f))),
             f @ Field::Value => self
                 .get_value()
                 .cloned()
-                .ok_or(ErrorKind::MissingField(format!("{}", f))),
+                .ok_or_else(|| ErrorKind::MissingField(format!("{}", f))),
             _ => unreachable!("Make sure clap only allows valid fields to hit this"),
         }
     }
@@ -121,37 +121,37 @@ where
     fn identifer(&self) -> Result<Self::Block, Self::Error> {
         self.get_ident()
             .cloned()
-            .ok_or(ErrorKind::MissingField(format!("{}", Field::Identifier)))
+            .ok_or_else(|| ErrorKind::MissingField(format!("{}", Field::Identifier)))
     }
 
     fn delimiter(&self) -> Result<Self::Block, Self::Error> {
         self.get_delimiter()
             .cloned()
-            .ok_or(ErrorKind::MissingField(format!("{}", Field::Delimiter)))
+            .ok_or_else(|| ErrorKind::MissingField(format!("{}", Field::Delimiter)))
     }
 
     fn guard(&self) -> Result<Self::Block, Self::Error> {
         self.get_guard()
             .cloned()
-            .ok_or(ErrorKind::MissingField(format!("{}", Field::Guard)))
+            .ok_or_else(|| ErrorKind::MissingField(format!("{}", Field::Guard)))
     }
 
     fn type_of(&self) -> Result<Self::Block, Self::Error> {
         self.get_type()
             .cloned()
-            .ok_or(ErrorKind::MissingField(format!("{}", Field::Type)))
+            .ok_or_else(|| ErrorKind::MissingField(format!("{}", Field::Type)))
     }
 
     fn pointer(&self) -> Result<Self::Block, Self::Error> {
         self.get_pointer()
             .cloned()
-            .ok_or(ErrorKind::MissingField(format!("{}", Field::Pointer)))
+            .ok_or_else(|| ErrorKind::MissingField(format!("{}", Field::Pointer)))
     }
 
     fn value(&self) -> Result<Self::Block, Self::Error> {
         self.get_value()
             .cloned()
-            .ok_or(ErrorKind::MissingField(format!("{}", Field::Value)))
+            .ok_or_else(|| ErrorKind::MissingField(format!("{}", Field::Value)))
     }
 }
 
@@ -171,11 +171,11 @@ impl OutputBuilder {
             FnvHashMap::with_capacity_and_hasher(self.blocks.len(), Default::default());
         for opt in &mut self.blocks {
             if opt.is_some() {
-                let block = std::mem::replace(opt, None);
+                let block = opt.take().unwrap();
                 // Hardcoded usizes for keys
                 // If you change these YOU MUST UPDATE the get_xx
                 // functions in output too
-                match block.unwrap() {
+                match block {
                     i @ BlockKind::Ident(_) => {
                         blocks.insert(0, i);
                     }

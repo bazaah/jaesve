@@ -254,7 +254,7 @@ where
     I: Iterator<Item = ioResult<u8>>,
 {
     let buffer: Result<Vec<u8>> = [prefix_byte]
-        .into_iter()
+        .iter()
         .map(|b| Ok(*b))
         .chain(scanner)
         .map(|res| res.map_err(|e| e.into()))
@@ -273,7 +273,7 @@ where
 
 /// Helper function for finding the key
 /// of the JSON object being unwound
-fn calculate_key(buffer: &Vec<u8>, offsets: (usize, usize)) -> Vec<u8> {
+fn calculate_key(buffer: &[u8], offsets: (usize, usize)) -> Vec<u8> {
     let (in_quotes, out_quotes) = offsets;
     let mut key: Vec<_> = buffer
         .iter()
@@ -308,7 +308,7 @@ where
             write!(w, "{}", blocks.delimiter()?)?;
         }
     }
-    write!(w, "\n")?;
+    writeln!(w, "")?;
 
     Ok(())
 }

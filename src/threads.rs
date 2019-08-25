@@ -58,7 +58,7 @@ pub(crate) fn spawn_workers(
             };
             // Cleanup
             match result() {
-                Ok(ok) => match_with_log!(Ok(ok), info!("Writer closing... success")),
+                Ok(_) => match_with_log!(Ok(()), info!("Writer closing... success")),
                 Err(e) => match_with_log!(Err(e), warn!("Writer closing... with error")),
             }
         })?;
@@ -122,7 +122,7 @@ pub(crate) fn spawn_workers(
             };
             // Cleanup
             match result() {
-                defer @ _ => {
+                defer => {
                     drop(tx_writer);
                     thWriter
                         .join()
@@ -142,7 +142,7 @@ pub(crate) fn spawn_workers(
                             ))
                         })??;
                     match defer {
-                        Ok(ok) => match_with_log!(Ok(ok), info!("Builder closing... success")),
+                        Ok(_) => match_with_log!(Ok(()), info!("Builder closing... success")),
                         Err(e) => match_with_log!(Err(e), warn!("Builder closing... with error")),
                     }
                 }
@@ -178,7 +178,7 @@ pub(crate) fn spawn_workers(
                                 index += 1;
                             }
                         }
-                        (index, read @ _) => {
+                        (index, read) => {
                             debug!("Processing input {}...", index);
                             let reader = BufReader::new(read.into_inner()).bytes();
                             unwind_json(&opts, index, reader, data_tx)?;
@@ -190,7 +190,7 @@ pub(crate) fn spawn_workers(
             };
             // Cleanup
             match result() {
-                defer @ _ => {
+                defer => {
                     drop(tx_builder);
                     thBuilder
                         .join()
@@ -210,7 +210,7 @@ pub(crate) fn spawn_workers(
                             ))
                         })??;
                     match defer {
-                        Ok(ok) => match_with_log!(Ok(ok), debug!("Reader closing... success")),
+                        Ok(_) => match_with_log!(Ok(()), debug!("Reader closing... success")),
                         Err(e) => match_with_log!(Err(e), warn!("Reader closing... with error")),
                     }
                 }
