@@ -1,7 +1,7 @@
 #![allow(deprecated)]
 use {
     crate::models::{
-        assets::{Delimiter, Field, ReadFrom, RegexOptions},
+        assets::{Delimiter, Field, Guard, ReadFrom, RegexOptions},
         get_reader,
     },
     clap::{crate_authors, crate_version, App, Arg, ArgMatches as Matches},
@@ -14,6 +14,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
         .about("Utility for converting JSON into a CSV-like format")
         .author(crate_authors!("\n"))
         .version(crate_version!())
+        .after_help("Use --help for more detailed messages")
         .arg(
             Arg::with_name("verbosity")
                 .short("v")
@@ -56,10 +57,13 @@ pub fn generate_cli<'a>() -> Matches<'a> {
             .takes_value(true)
             .default_value("\"")
             .value_name("CHAR")
-            .validator(|c| match c.parse::<char>() {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(format!("Couldn't parse '{}' into a char: {}", c, e))
-                }
+            .validator(|s| match s {
+                    s if s.is_empty() => Ok(()),
+                    s => match s.parse::<char>() {
+                            Ok(_) => Ok(()),
+                            Err(e) => Err(format!("Couldn't parse '{}' into a char: {}", s, e))
+                        }
+                    }
             )
             .help("Set field quote character")
         )
@@ -93,8 +97,8 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                 .multiple(true)
                 .allow_hyphen_values(true)
                 .value_terminator(":")
-                .help("Input file path(s) with a '-' representing stdin, MUST be terminated by a ':'")
-                .long_help("Input file path(s) with a '-' representing stdin, MUST be terminated by a ':'... i.e 'file1 file2 - file3 :")
+                .help("Input file path(s) with a '-' representing stdin")
+                .long_help("Input file path(s) with a '-' representing stdin, MUST be terminated by a ':' if it is not a final arg... i.e 'jaesve file1 file2 - file4 : --flag --option...")
         )
         .arg(
             Arg::with_name("output")
@@ -132,7 +136,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
 
 pub struct ProgramArgs {
     delimiter: Delimiter,
-    guard: Delimiter,
+    guard: Guard,
     debug_level: LevelFilter,
     by_line: bool,
     regex: Option<RegexOptions>,
@@ -193,7 +197,7 @@ impl<'a> ProgramArgs {
                     None
                 }
                 (Some(pattern), Some(column)) => Some(RegexOptions::new(pattern, column.into())),
-                (Some(_), None) => unreachable!("Default value supplied by clap"),
+                (Some(_), None) => unreachable!("Default value should be supplied by clap"),
                 (None, _) => None,
             };
 
@@ -204,9 +208,10 @@ impl<'a> ProgramArgs {
             _ => panic!("delimiter missing"),
         };
 
-        let guard: Delimiter = match store.value_of("guard") {
-            Some(c) => c.into(),
-            _ => unreachable!("guard missing"),
+        let guard: Guard = match store.value_of("guard") {
+            Some(s) if s.is_empty() => Guard::None,
+            Some(c) => Guard::Some(c.parse::<char>().unwrap()),
+            None => unreachable!("Default value should be supplied by clap"),
         };
 
         Self {
@@ -241,8 +246,8 @@ impl<'a> ProgramArgs {
         self.delimiter.clone()
     }
 
-    pub fn guard(&self) -> Delimiter {
-        self.guard.clone()
+    pub fn guard(&self) -> Guard {
+        self.guard
     }
 
     pub fn format(&self) -> &[Field] {

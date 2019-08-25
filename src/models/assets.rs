@@ -315,6 +315,30 @@ impl std::fmt::Display for Delimiter {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Guard {
+    Some(char),
+    None,
+}
+
+impl Guard {
+    pub fn new(grd: Option<char>) -> Self {
+        match grd {
+            Some(c) => Guard::Some(c),
+            None => Guard::None,
+        }
+    }
+}
+
+impl std::fmt::Display for Guard {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Guard::Some(c) => write!(f, "{}", c),
+            Guard::None => write!(f, ""),
+        }
+    }
+}
+
 pub struct JsonPointer<'j> {
     ident: usize,
     queue: VecDeque<(&'j JsonValue, String)>,
@@ -343,7 +367,7 @@ impl<'j> JsonPointer<'j> {
             match value {
                 Some((jObject(map), ref s)) => {
                     for (k, v) in map.iter() {
-                        let new_path = s.clone() + "/" + k;
+                        let new_path = format!("{}/{}", s, k);
                         if v.is_object() {
                             self.pbuf.push(
                                 OutputBuilder::new()
@@ -367,7 +391,7 @@ impl<'j> JsonPointer<'j> {
                 }
                 Some((jArray(a), ref s)) => {
                     for (i, v) in a.iter().enumerate() {
-                        let new_path = s.clone() + "/" + &i.to_string();
+                        let new_path = format!("{}/{}", s, i);
                         self.queue.push_back((v, new_path));
                     }
                 }

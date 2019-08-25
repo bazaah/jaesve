@@ -1,6 +1,9 @@
-use crate::models::{
-    assets::{Delimiter, Field, JType, RegexOptions},
-    error::ErrorKind,
+use {
+    crate::models::{
+        assets::{Delimiter, Field, Guard, JType, RegexOptions},
+        error::ErrorKind,
+    },
+    fnv::FnvHashMap,
 };
 
 pub trait Builder<D>
@@ -25,11 +28,11 @@ where
     fn value(&self) -> Result<Self::Block, Self::Error>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BlockKind {
     Ident(usize),
     Delimiter(Delimiter),
-    Guard(Delimiter),
+    Guard(Guard),
     Type(JType),
     Pointer(String),
     Value(Option<String>),
@@ -48,52 +51,42 @@ impl std::fmt::Display for BlockKind {
     }
 }
 
+/// Container for the various final parts
+/// used to assemble the program's output
 #[derive(Debug)]
 pub struct Output {
-    blocks: Vec<BlockKind>,
+    blocks: FnvHashMap<usize, BlockKind>,
 }
-
+// 0 == ident
+// 1 == delimiter
+// 2 == guard
+// 3 == type
+// 4 == jptr
+// 5 == value
+// Remember to update OutputBuilder's done() if you change these
 impl Output {
-    fn get_ident(&self) -> Option<BlockKind> {
-        self.blocks.iter().find_map(|kind| match kind {
-            BlockKind::Ident(i) => Some(BlockKind::Ident(*i)),
-            _ => None,
-        })
+    fn get_ident(&self) -> Option<&BlockKind> {
+        self.blocks.get(&0)
     }
 
-    fn get_delimiter(&self) -> Option<BlockKind> {
-        self.blocks.iter().find_map(|kind| match kind {
-            BlockKind::Delimiter(d) => Some(BlockKind::Delimiter(d.clone())),
-            _ => None,
-        })
+    fn get_delimiter(&self) -> Option<&BlockKind> {
+        self.blocks.get(&1)
     }
 
-    fn get_guard(&self) -> Option<BlockKind> {
-        self.blocks.iter().find_map(|kind| match kind {
-            BlockKind::Guard(g) => Some(BlockKind::Guard(g.clone())),
-            _ => None,
-        })
+    fn get_guard(&self) -> Option<&BlockKind> {
+        self.blocks.get(&2)
     }
 
-    fn get_type(&self) -> Option<BlockKind> {
-        self.blocks.iter().find_map(|kind| match kind {
-            BlockKind::Type(t) => Some(BlockKind::Type(*t)),
-            _ => None,
-        })
+    fn get_type(&self) -> Option<&BlockKind> {
+        self.blocks.get(&3)
     }
 
-    fn get_pointer(&self) -> Option<BlockKind> {
-        self.blocks.iter().find_map(|kind| match kind {
-            BlockKind::Pointer(p) => Some(BlockKind::Pointer(p.clone())),
-            _ => None,
-        })
+    fn get_pointer(&self) -> Option<&BlockKind> {
+        self.blocks.get(&4)
     }
 
-    fn get_value(&self) -> Option<BlockKind> {
-        self.blocks.iter().find_map(|kind| match kind {
-            BlockKind::Value(v) => Some(BlockKind::Value(v.clone())),
-            _ => None,
-        })
+    fn get_value(&self) -> Option<&BlockKind> {
+        self.blocks.get(&5)
     }
 }
 
@@ -107,15 +100,19 @@ where
         match d.into() {
             f @ Field::Identifier => self
                 .get_ident()
+                .cloned()
                 .ok_or(ErrorKind::MissingField(format!("{}", f))),
             f @ Field::Type => self
                 .get_type()
+                .cloned()
                 .ok_or(ErrorKind::MissingField(format!("{}", f))),
             f @ Field::Pointer => self
                 .get_pointer()
+                .cloned()
                 .ok_or(ErrorKind::MissingField(format!("{}", f))),
             f @ Field::Value => self
                 .get_value()
+                .cloned()
                 .ok_or(ErrorKind::MissingField(format!("{}", f))),
             _ => unreachable!("Make sure clap only allows valid fields to hit this"),
         }
@@ -123,31 +120,37 @@ where
 
     fn identifer(&self) -> Result<Self::Block, Self::Error> {
         self.get_ident()
+            .cloned()
             .ok_or(ErrorKind::MissingField(format!("{}", Field::Identifier)))
     }
 
     fn delimiter(&self) -> Result<Self::Block, Self::Error> {
         self.get_delimiter()
+            .cloned()
             .ok_or(ErrorKind::MissingField(format!("{}", Field::Delimiter)))
     }
 
     fn guard(&self) -> Result<Self::Block, Self::Error> {
         self.get_guard()
+            .cloned()
             .ok_or(ErrorKind::MissingField(format!("{}", Field::Guard)))
     }
 
     fn type_of(&self) -> Result<Self::Block, Self::Error> {
         self.get_type()
+            .cloned()
             .ok_or(ErrorKind::MissingField(format!("{}", Field::Type)))
     }
 
     fn pointer(&self) -> Result<Self::Block, Self::Error> {
         self.get_pointer()
+            .cloned()
             .ok_or(ErrorKind::MissingField(format!("{}", Field::Pointer)))
     }
 
     fn value(&self) -> Result<Self::Block, Self::Error> {
         self.get_value()
+            .cloned()
             .ok_or(ErrorKind::MissingField(format!("{}", Field::Value)))
     }
 }
@@ -164,11 +167,34 @@ impl OutputBuilder {
     }
 
     pub fn done(mut self) -> Output {
-        let mut blocks = Vec::with_capacity(self.blocks.len());
+        let mut blocks =
+            FnvHashMap::with_capacity_and_hasher(self.blocks.len(), Default::default());
         for opt in &mut self.blocks {
             if opt.is_some() {
                 let block = std::mem::replace(opt, None);
-                blocks.push(block.unwrap())
+                // Hardcoded usizes for keys
+                // If you change these YOU MUST UPDATE the get_xx
+                // functions in output too
+                match block.unwrap() {
+                    i @ BlockKind::Ident(_) => {
+                        blocks.insert(0, i);
+                    }
+                    d @ BlockKind::Delimiter(_) => {
+                        blocks.insert(1, d);
+                    }
+                    g @ BlockKind::Guard(_) => {
+                        blocks.insert(2, g);
+                    }
+                    t @ BlockKind::Type(_) => {
+                        blocks.insert(3, t);
+                    }
+                    p @ BlockKind::Pointer(_) => {
+                        blocks.insert(4, p);
+                    }
+                    v @ BlockKind::Value(_) => {
+                        blocks.insert(5, v);
+                    }
+                }
             }
         }
 
@@ -185,7 +211,7 @@ impl OutputBuilder {
         self
     }
 
-    pub fn guard(mut self, guard: Delimiter) -> Self {
+    pub fn guard(mut self, guard: Guard) -> Self {
         self.blocks[2] = Some(BlockKind::Guard(guard));
         self
     }
