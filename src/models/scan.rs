@@ -1,5 +1,9 @@
 use std::io::Result;
 
+/// Custom JSON scanner, keeps just enough
+/// information to determine if the read stream
+/// is inside quotes and the offsets of the most recent
+/// in-quotes slice and out-quotes slice
 pub struct JsonScan<I> {
     iter: I,
     prev: Option<u8>,

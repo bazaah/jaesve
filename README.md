@@ -1,36 +1,67 @@
 # Jaesve
 
-A CLI utility written in pure Rust for converting JSON objects to a series of CSV values, from stdin and/or file(s) to stdout or a file.
+A CLI utility written in pure Rust for stream converting JSON objects to a series of CSV values, from stdin and/or file(s) to stdout or a file.
 
 ## Installation
 
-- Install rust - minimum version: 2018 Stable (v1.30)
-- Clone this repository
-- Run `cargo run --release -- -h` for usage information
+- Install [rust](https://www.rust-lang.org/tools/install)
+- Run `rustup default nightly`
+- Run `git clone https://github.com/bazaah/jaesve.git; cd jaesve`
+- Run `cargo run --release`
+- The binary can be found in `target/release/`
 
 ### CLI
 
-Jaesve comes with a CLI, courtesy of clap.rs. You can type `-h` or `--help` to see the available settings.
+Jaesve comes with a CLI, courtesy of [clap.rs](https://github.com/clap-rs/clap). You can type `-h` or `--help` to see the available settings, or browse a complete listing below.
 
 #### Flags
 
-- `-h` `--help` Brings up the cli
+- `-h` `--help` Displays help (use `--help` for more detailed messages)
 - `-V` `--version` Displays version information
-- `-t` `--type` Don't display the type of each JSON value
-- `-v` Verbosity of debug information (max: 3)
+- `-a` `--append` Append to output file, instead of overwriting
+- `-l` `--line` Set stdin to read a JSON doc from each line
+- `-q` `--quiet` Silences error messages
+- `-v` Verbosity of debug information
+  - Max: 3
 
 #### Options
 
-- `-i` `--input` Set input file(s) to be read from (NOTE: Files are processed in the order you enter them)
-- `-o` `--output` Set output file to write (NOTE: Jaesve defaults to stdout)
-- `-s` Sets the separator: either a comma (","), comma-space (", ") or a tab ("ACSII: \09"), or an arbitrary, user designated separator
+- `-o` `--output` Set output file to write
+  - Default: writes to stdout
+- `-E` `--regex` Set a regex to filter output
+- `-c` `--column` Sets field to match regex on
+  - Possible: `ident, jptr, type, value`
+- `-f` `--format` A dot '.' separated list of fields describing how output is formatted
+  - Default: `ident.jptr.type.value`
+  - Possible: `ident, jptr, type, value`
+- `-d` `--delim` Sets delimiter between output fields
+  - Default: `,`
+- `-g` `--guard` Set field quote character
+  - Default: `"`
 
-#### Experimental
+#### Args
 
-These features are currently undergoing testing and should be used with care.
+- A space separated list of valid file paths, with a `-` representing stdin. If you wish to add flags and options after this Arg, you must end its values with a `:`.
+  - For example:
+    - `jaesve --quiet --append -o output.csv input1 input2 - input4 // This is happy`
+    - `jaesve input1 input2 - input4 --quiet --append -o output.csv // This is sad`
+    - `jaesve input1 input2 - input4 : --quiet --append -o output.csv // This is happy`
 
-- `-l` `--line` Sets stdin to read one JSON object per line
-- `-x` `--regex` Set a regex for filtering output
+### Performance
+
+#### Speed
+
+In preliminary tests it parsed 2G of JSON in 3 minutes.
+
+#### Memory
+
+Jaesve is written to minimize memory usage. It uses a stream based approach to parsing JSON, and attempts to unroll nested objects. Its maximum memory footprint can be described as follows:
+
+- `sizeof largest object/array` +
+- `sizeof combined elements NOT including any object/array from doc start to largest object/array` + 
+- `program overhead`
+
+TLDR: the more deeply nested objects/arrays you have the larger the memory footprint.
 
 ### Example Usage
 
@@ -41,78 +72,51 @@ For a simple example, let's use the following JSON:
 {
   "aliceblue": "#f0f8ff",
   "antiquewhite": "#faebd7",
-  "aqua": "#00ffff",
-  "aquamarine": "#7fffd4",
   "azure": "#f0ffff",
   "beige": "#f5f5dc",
-  "bisque": "#ffe4c4",
   "black": "#000000",
   "blanchedalmond": "#ffebcd",
-  "blue": "#0000ff",
-  "blueviolet": "#8a2be2",
-  "brown": "#a52a2a",
-  "phone numbers": ["+44 1234567", "+44 2345678"],
   "gradient": {
     "blues": ["#0000f0", "#0000f1", "#0000f2"],
     "green": "#00ff00"
-  },
-  "a number": 42,
-  "a bool": true,
-  "weird": "NaN"
+  }
 }
 ```
 
-Typing `cargo run --release -- -ti sample.json` will output:
+Running `jaesve sample.json` prints out
 
-```bash
-"/phone number", ""
-"/gradient", ""
-"/a bool", true
-"/a number", 42
-"/aliceblue", "#f0f8ff"
-"/antiquewhite", "#faebd7"
-"/aqua", "#00ffff"
-"/aquamarine", "#7fffd4"
-"/azure", "#f0ffff"
-"/beige", "#f5f5dc"
-"/bisque", "#ffe4c4"
-"/black", "#000000"
-"/blanchedalmond", "#ffebcd"
-"/blue", "#0000ff"
-"/blueviolet", "#8a2be2"
-"/brown", "#a52a2a"
-"/gradient/blues", ""
-"/weird", "NaN"
-"/phone number/0", "+44 1234567"
-"/phone number/1", "+44 2345678"
-"/gradient/green", "#00ff00"
-"/gradient/blues/0", "#0000f0"
-"/gradient/blues/1", "#0000f1"
-"/gradient/blues/2", "#0000f2"
+```csv
+"1","/gradient/blues/0","String","#0000f0"
+"1","/gradient/blues/1","String","#0000f1"
+"1","/gradient/blues/2","String","#0000f2"
+"1","/gradient/green","String","#00ff00"
+"1","/gradient/blues","Array",""
+"1","/aliceblue","String","#f0f8ff"
+"1","/antiquewhite","String","#faebd7"
+"1","/azure","String","#f0ffff"
+"1","/beige","String","#f5f5dc"
+"1","/black","String","#000000"
+"1","/blanchedalmond","String","#ffebcd"
+"1","/gradient","Object",""
 ```
 
-Why are some entries like 'phone number' or 'gradient' empty? Because they are not endpoints, they could contain other k:v pairs. Note that by default jaesve will include type information, which we removed with `-t`.
+Where:
 
-For another example, let's say that you're only interested in finding numbers, and you want to read from stdin. After some thought you type: `cat some/path/sample.json | cargo run --release | grep Number` which outputs:
-
-```bash
-"/a number", Number, 42
-```
-
-What happened here? `cat` sent to jaesve's stdin which was auto detected due to no `-i` and because we were only looking for JSON numbers (not numbers inside strings) we send it off to `grep` to filter out everything that is not a `Number`.
+- `"INTEGER"` is which input source the value came from
+- `"/.../..."` is the [json pointer](https://tools.ietf.org/html/rfc6901) of that record
+- `"JSON TYPE"` is the record type
+- `VALUE` is the value associated with that record, if it is an endpoint i.e not a Object or Array
 
 ### Errors
 
-Jaesve prints any errors to stderr if `-v` is set (with escalating information on `-vv` or `-vvv`), otherwise it will fail silently to avoid messing with pipes and handles.
+Jaesve prints any errors to stderr unless `--quiet` is set with escalating information on `-v`, `-vv` and `-vvv`.
 
 It will error for the following conditions:
 
-1. JSON object is malformed
+1. JSON object is malformed / contains invalid unicode points
 2. Could not read from input file(s)
 3. Could not create output file (It will not create directories)
 4. Could not write to output
-
-If any of these occur it will log an error and attempt to continue
 
 #### Bugs
 

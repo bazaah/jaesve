@@ -38,20 +38,6 @@ pub enum ReadFrom {
     Stdin,
 }
 
-pub enum ReadKind {
-    File(File),
-    Stdin(Stdin),
-}
-
-impl ReadKind {
-    pub fn into_inner(self) -> Box<dyn ioRead> {
-        match self {
-            ReadKind::File(f) => Box::new(f),
-            ReadKind::Stdin(s) => Box::new(s),
-        }
-    }
-}
-
 // Displays either 'Stdin' or a file name, if file name contains non ASCII
 // characters, they are replaced with � (U+FFFD)
 impl std::fmt::Display for ReadFrom {
@@ -68,6 +54,23 @@ impl std::fmt::Display for ReadFrom {
     }
 }
 
+/// Wrapper around supported Read types
+/// avoiding dynamic dispatch
+pub enum ReadKind {
+    File(File),
+    Stdin(Stdin),
+}
+
+impl ReadKind {
+    pub fn into_inner(self) -> Box<dyn ioRead> {
+        match self {
+            ReadKind::File(f) => Box::new(f),
+            ReadKind::Stdin(s) => Box::new(s),
+        }
+    }
+}
+
+/// Economical wrapper for storing the Json Value type
 #[derive(Debug, Clone, Copy)]
 pub enum JType {
     Object,
@@ -119,6 +122,8 @@ impl std::fmt::Display for JType {
     }
 }
 
+/// Functions as a cheap marker for representing
+/// an abstract BlockKind
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 pub enum Field {
     Identifier,
@@ -179,7 +184,7 @@ impl Field {
 }
 
 // Unchecked conversion, should only be used on
-// otherwise validated conversions
+// otherwise (clap) validated conversions
 impl From<&str> for Field {
     fn from(s: &str) -> Self {
         match s {
@@ -189,7 +194,7 @@ impl From<&str> for Field {
             "type" => Field::Type,
             "jptr" => Field::Pointer,
             "value" => Field::Value,
-            _ => unreachable!("Called infallible conversion to Field on a fallible conversion, use try_from instead"),
+            _ => unreachable!("Called infallible conversion to Field on a fallible conversion, use Field::try_from instead"),
         }
     }
 }
@@ -270,6 +275,10 @@ impl RegexOptions {
     }
 }
 
+/// Type 'char' wrapper specialized for
+/// output delimiters, avoids locking the delimiter
+/// to a single char, and avoids unnecessary
+/// cloning on a single char
 #[derive(Debug)]
 pub enum Delimiter {
     Char(char),
@@ -315,6 +324,9 @@ impl std::fmt::Display for Delimiter {
     }
 }
 
+/// Type 'char' wrapper specialized for
+/// output field guards, allowing for
+/// no guard or 1 guard char
 #[derive(Debug, Clone, Copy)]
 pub enum Guard {
     Some(char),
@@ -339,6 +351,9 @@ impl std::fmt::Display for Guard {
     }
 }
 
+/// Struct responsible for turning each unwound
+/// JSON object into the components that Output / Builder
+/// will use
 pub struct JsonPointer<'j> {
     ident: usize,
     queue: VecDeque<(&'j JsonValue, String)>,
@@ -450,6 +465,9 @@ impl<'j> Iterator for JsonPointer<'j> {
     }
 }
 
+/// Convenience intermediate struct for
+/// turning the raw parts that the scanner / unwinding
+/// sends to JsonPointer
 pub struct JsonPacket {
     ident: usize,
     base_path: String,

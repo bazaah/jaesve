@@ -97,6 +97,8 @@ pub fn set_reader(src: &Option<ReadFrom>) -> ReadKind {
     }
 }
 
+/// Entry function for the JSON stream parser,
+/// handles both recursive and single item docs
 pub fn unwind_json<I>(
     opts: &ProgramArgs,
     ident: usize,
@@ -289,6 +291,7 @@ fn calculate_key(buffer: &[u8], offsets: (usize, usize)) -> Vec<u8> {
     key
 }
 
+/// Specialized writer function for Output using Builder
 pub fn write_formatted_output<B, W>(w: &mut W, blocks: B, blueprint: &[Field]) -> Result<()>
 where
     B: Builder<Field>,

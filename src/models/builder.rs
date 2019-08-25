@@ -6,6 +6,8 @@ use {
     fnv::FnvHashMap,
 };
 
+/// Interface for converting the collected output parts into
+/// output
 pub trait Builder<D>
 where
     D: Into<Field>,
@@ -28,6 +30,8 @@ where
     fn value(&self) -> Result<Self::Block, Self::Error>;
 }
 
+/// Enum containing every valid output kind
+/// used by OutputBuilder / Output
 #[derive(Debug, Clone)]
 pub enum BlockKind {
     Ident(usize),
@@ -155,6 +159,7 @@ where
     }
 }
 
+/// Used to build up an Output struct
 #[derive(Debug)]
 pub struct OutputBuilder {
     blocks: [Option<BlockKind>; 6],
@@ -173,8 +178,9 @@ impl OutputBuilder {
             if opt.is_some() {
                 let block = opt.take().unwrap();
                 // Hardcoded usizes for keys
-                // If you change these YOU MUST UPDATE the get_xx
-                // functions in output too
+                // If you change these YOU MUST UPDATE the
+                // the other OutputBuilder methods AND the get_xx
+                // functions in Output too
                 match block {
                     i @ BlockKind::Ident(_) => {
                         blocks.insert(0, i);
@@ -231,6 +237,9 @@ impl OutputBuilder {
         self
     }
 
+    /// Function is designed to be used with a filter_map
+    /// will return None if a regex exists and failed to match,
+    /// otherwise always returns Some
     pub fn check(self, regex: Option<&RegexOptions>) -> Option<Self> {
         match regex {
             Some(regex) => match regex.on_field() {
@@ -267,6 +276,14 @@ impl OutputBuilder {
                 Field::Value => match self.blocks[5] {
                     Some(BlockKind::Value(ref o)) => match o {
                         Some(v) if !regex.pattern().is_match(v) => None,
+                        // This arm excludes any jptrs that do not a have an (single) associated value
+                        // i.e objects and arrays... for example
+                        // "/" refers to the entire JSON doc and as such does not have single value (its 'value' is the entire doc)
+                        // The decision to exclude these items is made on the assumptions that:
+                        // 1. If the user matches on the value field they expect the program to ignore "empty" fields
+                        // 2. It reduces output clutter when the user is looking for something
+                        // It has one substantial downside:
+                        // 1. If the user is looking for non-existent values not returning these "empty" values is un-intuitive
                         None => None,
                         _ => Some(self),
                     },
