@@ -97,7 +97,7 @@ pub fn set_reader(src: &Option<ReadFrom>) -> ReadKind {
     }
 }
 
-pub(crate) fn unwind_json<I>(
+pub fn unwind_json<I>(
     opts: &ProgramArgs,
     ident: usize,
     src: I,
@@ -156,7 +156,7 @@ where
 // if it isn't the deserializer will catch it,
 // but the error it emits might be cryptic depending on
 // how badly this function mangled it
-pub(crate) fn unwind_recursive<I>(
+pub fn unwind_recursive<I>(
     opts: &ProgramArgs,
     ident: usize,
     scanner: &mut JsonScan<I>,
