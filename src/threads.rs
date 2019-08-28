@@ -167,8 +167,8 @@ pub(crate) fn spawn_workers(
                             "failed to send next |reader -> builder| channel, builder has hung up"
                         ))
                     })?;
-                    match item {
-                        (i, read @ ReadKind::Stdin(_)) if opts.by_line() => {
+                    match (item, opts.by_line()) {
+                        ((i, read @ ReadKind::Stdin(_)), true) => {
                             let mut read_line = LineReader::new(read.into_inner());
                             let mut index = 1;
                             while let Some(slice) = read_line.next_line() {
@@ -178,7 +178,7 @@ pub(crate) fn spawn_workers(
                                 index += 1;
                             }
                         }
-                        (index, read) => {
+                        ((index, read), _) => {
                             debug!("Processing input {}...", index);
                             let reader = BufReader::new(read.into_inner()).bytes();
                             unwind_json(&opts, index, reader, data_tx)?;

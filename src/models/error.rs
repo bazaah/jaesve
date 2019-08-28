@@ -1,6 +1,4 @@
-use std::{
-    error::Error, fmt::Debug, io::Error as ioError, ops::Try, process::Termination, str::Utf8Error,
-};
+use std::{error::Error, fmt::Debug, io::Error as ioError, process::exit, str::Utf8Error};
 
 pub(crate) type Result<T> = std::result::Result<T, ErrorKind>;
 
@@ -60,13 +58,6 @@ impl From<Utf8Error> for ErrorKind {
     }
 }
 
-// Option::None => ErrorKind
-impl From<std::option::NoneError> for ErrorKind {
-    fn from(_: std::option::NoneError) -> Self {
-        ErrorKind::Generic
-    }
-}
-
 // E => ErrorKind, where E implements Error
 impl From<Box<dyn Error>> for ErrorKind {
     fn from(e: Box<dyn Error>) -> Self {
@@ -98,13 +89,48 @@ impl Error for ErrorKind {
     }
 }
 
-// Handles program return codes
+/// Handles program return codes
 pub(crate) enum ProgramExit<T>
 where
     T: Error,
 {
     Success,
     Failure(T),
+}
+
+impl<T> ProgramExit<T>
+where
+    T: Into<i32> + Debug + Error,
+{
+    pub fn exit(self) -> ! {
+        match self {
+            Self::Success => exit(0),
+            Self::Failure(err) => {
+                error!("Program exited with error: {}", err);
+                exit(err.into())
+            }
+        }
+    }
+}
+
+impl From<Result<()>> for ProgramExit<ErrorKind> {
+    fn from(res: Result<()>) -> Self {
+        match res {
+            Ok(_) => ProgramExit::Success,
+            Err(e) => ProgramExit::Failure(e),
+        }
+    }
+}
+
+/*
+// Unstable implementation that is much prettier and doesn't require a try_main()
+// Once Termination + Try have been stabilized re-enable
+
+// Option::None => ErrorKind
+impl From<std::option::NoneError> for ErrorKind {
+    fn from(_: std::option::NoneError) -> Self {
+        ErrorKind::Generic
+    }
 }
 
 impl<T: Into<i32> + Debug + Error> Termination for ProgramExit<T> {
@@ -138,3 +164,4 @@ impl<T: Error> Try for ProgramExit<T> {
         ProgramExit::Success
     }
 }
+*/

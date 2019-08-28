@@ -58,8 +58,8 @@ pub fn generate_cli<'a>() -> Matches<'a> {
             .default_value("\"")
             .value_name("CHAR")
             .validator(|s| match s {
-                    s if s.is_empty() => Ok(()),
-                    s => match s.parse::<char>() {
+                    ref s if s.is_empty() => Ok(()),
+                    ref s => match s.parse::<char>() {
                             Ok(_) => Ok(()),
                             Err(e) => Err(format!("Couldn't parse '{}' into a char: {}", s, e))
                         }

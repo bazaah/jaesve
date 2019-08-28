@@ -1,4 +1,3 @@
-#![feature(termination_trait_lib, try_trait, bind_by_move_pattern_guards)]
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -27,12 +26,17 @@ lazy_static! {
     static ref CLI: ProgramArgs = ProgramArgs::init(generate_cli());
 }
 
-fn main() -> ProgramExit<ErrorKind> {
+fn main() {
     // Start Pre-program code, do not place anything above these lines
     TermLogger::init(CLI.debug_level(), Config::default(), TerminalMode::Stderr).unwrap();
     info!("CLI options loaded and logger started");
     // End of Pre-program block
 
+    // Annoying inability to return arbitrary exit codes on stable requires this
+    ProgramExit::from(try_main()).exit()
+}
+
+fn try_main() -> Result<(), ErrorKind> {
     // Channel for sending open input streams (stdin/file handles)
     // number controls how many shall be open at any given time,
     // counting from 0 (i.e: 0 -> 1, 1 -> 2, etc)
@@ -63,5 +67,5 @@ fn main() -> ProgramExit<ErrorKind> {
         // join() returns a Result<Result<(), Errorkind>, ErrorKind>, hence the double question mark
     })??;
     // Return 0
-    ProgramExit::Success
+    Ok(())
 }
