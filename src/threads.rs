@@ -43,7 +43,7 @@ pub(crate) fn spawn_workers(
             debug!("Writer initialized");
             let rx_builder = BuWr_rx;
             let opts = &opts;
-            let mut writer = BufWriter::new(get_writer(opts.writer()));
+            let mut writer = BufWriter::with_capacity(opts.output_buffer_size(), get_writer(opts.writer()));
             info!("Buffered writer initialized");
             let mut result = || -> Result<()> {
                 // Hot loop
@@ -169,7 +169,7 @@ pub(crate) fn spawn_workers(
                     })?;
                     match (item, opts.by_line()) {
                         ((i, read @ ReadKind::Stdin(_)), true) => {
-                            let mut read_line = LineReader::new(read.into_inner());
+                            let mut read_line = LineReader::with_delimiter_and_capacity(opts.linereader_eol(), opts.input_buffer_size(), read.into_inner());
                             let mut index = 1;
                             while let Some(slice) = read_line.next_line() {
                                 debug!("Processing line {} of input {}...", index, i);
@@ -180,7 +180,7 @@ pub(crate) fn spawn_workers(
                         }
                         ((index, read), _) => {
                             debug!("Processing input {}...", index);
-                            let reader = BufReader::new(read.into_inner()).bytes();
+                            let reader = BufReader::with_capacity(opts.input_buffer_size(), read.into_inner()).bytes();
                             unwind_json(&opts, index, reader, data_tx)?;
                         }
                     }

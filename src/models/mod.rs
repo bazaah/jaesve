@@ -9,6 +9,7 @@ use {
             scan::JsonScan,
         },
     },
+    simplelog::*,
     std::{
         fs::{File, OpenOptions},
         io::{stdin as cin, stdout as cout, Result as ioResult, Write as ioWrite},
@@ -51,7 +52,7 @@ pub fn get_writer(w: &(Option<String>, bool)) -> Box<dyn ioWrite> {
         ),
         (None, _) => match_with_log!(
             Box::new(cout()),
-            info!("No file detected, defaulting to stdout...")
+            info!("No output file detected, defaulting to stdout...")
         ),
     }
 }
@@ -78,10 +79,10 @@ pub fn set_reader(src: &Option<ReadFrom>) -> ReadKind {
         Some(s) => match s {
             ReadFrom::File(path) => match_with_log!(
                 match File::open(path) {
-                    Ok(f) => match_with_log!(ReadKind::File(f), info!("Success!")),
+                    Ok(f) => match_with_log!(ReadKind::File(f), info!("Success! ({:?})", path)),
                     Err(e) => match_with_log!(
                         ReadKind::Stdin(cin()),
-                        warn!("Failed! {}, switching to stdin...", e)
+                        warn!("Failed! {}, switching to stdin... ({:?})", e, path)
                     ),
                 },
                 info!("Attempting to read from {:?}...", path)
@@ -94,6 +95,54 @@ pub fn set_reader(src: &Option<ReadFrom>) -> ReadKind {
             ReadKind::Stdin(cin()),
             info!("No input source found, defaulting to stdin...")
         ),
+    }
+}
+
+/// Handles crate log initialization, potentially including
+/// user defined writer sources, if any source is unreachable
+/// it is ignored
+pub fn initialize_logging(opts: &ProgramArgs) {
+    // Collects any failures for logging
+    let mut skipped: Vec<String> = Vec::new();
+    match opts.logger() {
+        Some(set) if set.contains("-") && set.len() == 1 => {
+            TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr).unwrap()
+        }
+        Some(set) => CombinedLogger::init(
+            set.iter()
+                .filter_map(|path| match path.as_str() {
+                    "-" => Some(None),
+                    path => OpenOptions::new()
+                        .append(true)
+                        .create(true)
+                        .open(path)
+                        .map_err(|e| skipped.push(format!("'{}' reason: {}", path, e)))
+                        .ok()
+                        .map(|f| Some(f)),
+                })
+                .map(|path| -> Box<dyn SharedLogger> {
+                    match path {
+                        Some(file) => WriteLogger::new(opts.debug_level(), Config::default(), file),
+                        None => TermLogger::new(
+                            opts.debug_level(),
+                            Config::default(),
+                            TerminalMode::Stderr,
+                        )
+                        .unwrap(),
+                    }
+                })
+                .collect(),
+        )
+        .unwrap(),
+        None => {
+            TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr).unwrap()
+        }
+    }
+    info!("<---- PROGRAM START ---->");
+    if !skipped.is_empty() {
+        for failed in skipped {
+            warn!("Failed to open {}... ignoring", failed)
+        }
     }
 }
 

@@ -9,11 +9,10 @@ use {
         models::{
             assets::ReadKind,
             error::{ErrorKind, ProgramExit},
-            set_reader,
+            initialize_logging, set_reader,
         },
         threads::spawn_workers,
     },
-    simplelog::*,
     std::sync::mpsc::{sync_channel as syncQueue, Receiver, SyncSender},
 };
 
@@ -28,7 +27,7 @@ lazy_static! {
 
 fn main() {
     // Start Pre-program code, do not place anything above these lines
-    TermLogger::init(CLI.debug_level(), Config::default(), TerminalMode::Stderr).unwrap();
+    initialize_logging(&CLI);
     info!("CLI options loaded and logger started");
     // End of Pre-program block
 
@@ -40,7 +39,8 @@ fn try_main() -> Result<(), ErrorKind> {
     // Channel for sending open input streams (stdin/file handles)
     // number controls how many shall be open at any given time,
     // counting from 0 (i.e: 0 -> 1, 1 -> 2, etc)
-    let (tx, rx): (SyncSender<ReadKind>, Receiver<ReadKind>) = syncQueue(1);
+    let (tx, rx): (SyncSender<ReadKind>, Receiver<ReadKind>) =
+        syncQueue(CLI.input_file_handles_max());
 
     // Instantiates worker threads
     let reader = spawn_workers(&CLI, rx)?;
@@ -64,7 +64,7 @@ fn try_main() -> Result<(), ErrorKind> {
             "{}",
             std::thread::current().name().unwrap_or("unnamed")
         ))
-        // join() returns a Result<Result<(), Errorkind>, ErrorKind>, hence the double question mark
+        // join() returns a Result<Result<(), ErrorKind>, ErrorKind>, hence the double question mark
     })??;
     // Return 0
     Ok(())
