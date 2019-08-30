@@ -5,10 +5,13 @@ A CLI utility written in pure Rust for stream converting JSON objects to a serie
 ## Installation
 
 - Install [rust](https://www.rust-lang.org/tools/install)
-- Run `rustup default nightly`
-- Run `git clone https://github.com/bazaah/jaesve.git; cd jaesve`
-- Run `cargo run --release`
-- The binary can be found in `target/release/`
+  1. Install from cargo
+      - `cargo install jaesve`
+  2. Install from the repo
+      - Run `rustup default stable`
+      - Run `git clone https://github.com/bazaah/jaesve.git; cd jaesve`
+      - Run `cargo run --release`
+      - The binary can be found in `target/release/`
 
 ### CLI
 
