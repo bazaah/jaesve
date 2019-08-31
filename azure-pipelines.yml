@@ -1,0 +1,41 @@
+stages:
+  - stage: compilation_check
+    displayName: Compilation check
+    jobs:
+      - template: rust/check.yml@templates
+        parameters: 
+          rust: stable
+          all_features: true
+  - stage: clippy_check
+    displayName: Clippy check
+    jobs:
+      - template: rust/clippy.yml@templates
+        parameters:
+          rust: stable
+          allow_fail: true
+  - stage: cargo_testing
+    displayName: Cargo test(s)
+    jobs:
+      - template: rust/test.yml@templates
+        parameters:
+          rust: stable
+          id: stable
+          cross: true
+          allow_fail: false
+          test_list:
+            - "--all"
+      - template: rust/test.yml@templates
+        parameters:
+          rust: nightly
+          id: nightly
+          cross: true
+          allow_fail: false
+          test_list:
+            - "--all"
+
+resources:
+  repositories:
+    - repository: templates
+      type: github
+      name: bazaah/azure-templates
+      endpoint: bazaah
