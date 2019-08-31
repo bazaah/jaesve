@@ -10,7 +10,10 @@ use {
     std::collections::HashSet,
 };
 
-pub fn generate_cli<'a>() -> Matches<'a> {
+// Subset of all Field variants that can be used for valuable output
+const VALID_FIELDS: [Field; 4] = [Field::Identifier, Field::Pointer, Field::Type, Field::Value];
+
+pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
     App::new("jaesve")
         .about("Utility for converting JSON into a CSV-like format")
         .author(crate_authors!("\n"))
@@ -88,7 +91,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
             .value_name("STRING")
             .requires("regex")
             .default_value_if("regex", None, Field::Pointer.into())
-            .possible_values(&[Field::Identifier.into(), Field::Pointer.into(), Field::Type.into(), Field::Value.into()])
+            .possible_values(VALID_FIELDS.iter().map(|f| f.clone().into()).collect::<Vec<&str>>().as_slice())
             .help("Sets column to match regex on")
         )
         .arg(
@@ -120,7 +123,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                 .validator(|fmt| {
                     let res: Result<Vec<_>, _> = fmt.split('.').map(|sub| Field::try_from_whitelist(
                             sub,
-                            &[Field::Identifier, Field::Pointer, Field::Type, Field::Value]
+                            &VALID_FIELDS
                         )
                     ).collect();
                     match res {
@@ -210,7 +213,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                         .default_value("\n")
                         .hide_default_value(true)
                         .validator(|s| match s {
-                            ref s => match s.parse::<u8>() {
+                            ref s => match s.parse::<char>() {
                                 Ok(_) => Ok(()),
                                 Err(e) => Err(format!("Couldn't parse '{}' into a char: {}", s, e))
                                 }
@@ -219,7 +222,7 @@ pub fn generate_cli<'a>() -> Matches<'a> {
                         .help("Set stdin linereader's EOL character, ignored if '--lines' is not set")
                 )
         )
-        .get_matches()
+    //.get_matches()
 }
 
 pub struct ProgramArgs {
@@ -234,8 +237,9 @@ pub struct ProgramArgs {
     subcommand_config: SubConfig,
 }
 
-impl<'a> ProgramArgs {
-    pub fn init(store: Matches<'a>) -> Self {
+impl<'a, 'b> ProgramArgs {
+    pub fn init(cli: App<'a, 'b>) -> Self {
+        let store = cli.get_matches();
         let debug_level = match (store.occurrences_of("verbosity"), store.is_present("quiet")) {
             (_, true) => LevelFilter::Off,
             (0, false) => LevelFilter::Warn,
@@ -420,8 +424,8 @@ impl SubConfig {
                 let linereader_eol = substore
                     .value_of("eol_char_linereader")
                     .unwrap()
-                    .parse::<u8>()
-                    .unwrap();
+                    .parse::<char>()
+                    .unwrap() as u8;
 
                 SubConfig {
                     logger,
@@ -445,6 +449,236 @@ impl Default for SubConfig {
             output_buffer_size: 16 * 1024,
             input_buffer_size: 64 * 1024,
             linereader_eol: b'\n',
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        clap::{AppSettings, ErrorKind as ClapError},
+        itertools::Itertools,
+    };
+    macro_rules! test_cli {
+        () => {
+            generate_cli().setting(AppSettings::NoBinaryName)
+        };
+    }
+
+    #[test]
+    fn validate_opt_guard_success() {
+        let app = test_cli!().get_matches_from_safe(&["--guard", "'"]);
+
+        assert!(app.is_ok())
+    }
+
+    #[test]
+    fn validate_opt_guard_failure() {
+        let app = test_cli!().get_matches_from_safe(&["--guard", "not a char"]);
+
+        assert!(app.is_err());
+        assert_eq!(app.unwrap_err().kind, ClapError::ValueValidation)
+    }
+
+    #[test]
+    fn validate_opt_regex_success() {
+        let app = test_cli!().get_matches_from_safe(&["--regex", "j[a-zA-Z]+e"]);
+
+        assert!(app.is_ok())
+    }
+
+    #[test]
+    fn validate_opt_regex_failure() {
+        let app = test_cli!().get_matches_from_safe(&["--regex", "j[a-zA-Z+e"]);
+
+        assert!(app.is_err());
+        assert_eq!(app.unwrap_err().kind, ClapError::ValueValidation)
+    }
+
+    #[test]
+    fn possible_opt_column() {
+        for field in &VALID_FIELDS {
+            let col: &str = field.clone().into();
+            let app = test_cli!().get_matches_from_safe(&["--column", col, "-E", "j[a-zA-Z]+e"]);
+            assert!(app.is_ok());
+        }
+    }
+
+    #[test]
+    fn requires_opt_column() {
+        let app = test_cli!().get_matches_from_safe(&["--column", "value"]);
+
+        assert!(app.is_err());
+        assert_eq!(app.unwrap_err().kind, ClapError::MissingRequiredArgument)
+    }
+
+    #[test]
+    fn syntax_arg_input() {
+        let app = test_cli!().get_matches_from_safe(&["path1", "path2", "-", "path4"]);
+        assert!(app.is_ok());
+
+        let app =
+            test_cli!().get_matches_from_safe(&["path1", "path2", "-", "path4", ":", "--quiet"]);
+
+        assert!(app.is_ok());
+        assert_eq!(app.unwrap().is_present("quiet"), true);
+
+        // Test for changes in the edge behavior of clap
+        let app = test_cli!().get_matches_from_safe(&["path1", "path2", "-", "path4", "config"]);
+
+        assert!(app.is_ok());
+        assert_eq!(app.unwrap().is_present("config"), true);
+    }
+
+    #[test]
+    fn validate_opt_format_combinations() {
+        VALID_FIELDS
+            .iter()
+            .combinations(VALID_FIELDS.len())
+            .map(|outer| {
+                let fmt = outer
+                    .iter()
+                    .map(|f| {
+                        let whatever = *f.clone();
+                        let col: &str = whatever.into();
+                        col
+                    })
+                    .collect::<Vec<&str>>();
+                fmt.join(".")
+            })
+            .for_each(|fmt| {
+                let app = test_cli!().get_matches_from_safe(&["--format", &fmt]);
+
+                assert!(app.is_ok());
+            })
+    }
+
+    #[test]
+    fn syntax_opt_format() {
+        let fmt: &str = VALID_FIELDS[0].clone().into();
+        let app = test_cli!().get_matches_from_safe(&["--format", fmt]);
+
+        assert!(app.is_ok());
+
+        let trailing_dot = format!("{}.", fmt);
+        let app = test_cli!().get_matches_from_safe(&["--format", &trailing_dot]);
+
+        assert!(app.is_err());
+        assert_eq!(app.unwrap_err().kind, ClapError::ValueValidation);
+
+        let leading_dot = format!(".{}", fmt);
+        let app = test_cli!().get_matches_from_safe(&["--format", &leading_dot]);
+
+        assert!(app.is_err());
+        assert_eq!(app.unwrap_err().kind, ClapError::ValueValidation);
+    }
+
+    #[test]
+    fn syntax_subcommand_opt_log_to() {
+        let app =
+            test_cli!().get_matches_from_safe(&["config", "--log_to", "log1", "log2", "-", "log4"]);
+        assert!(app.is_ok());
+
+        let app = test_cli!().get_matches_from_safe(&[
+            "config",
+            "--log_to",
+            "log1",
+            ":",
+            "--file_limit",
+            "5",
+        ]);
+
+        assert!(app.is_ok());
+        assert_eq!(
+            app.unwrap()
+                .subcommand_matches("config")
+                .unwrap()
+                .value_of("max_open_file_handles"),
+            Some("5")
+        );
+
+        // Test for changes in the edge behavior of clap
+        let app =
+            test_cli!().get_matches_from_safe(&["config", "--log_to", "log1", "--file_limit", "5"]);
+
+        assert!(app.is_ok());
+        // note the ne here... '--file_limit' is treated as a 'log_to' value
+        assert_ne!(
+            app.unwrap()
+                .subcommand_matches("config")
+                .unwrap()
+                .value_of("max_open_file_handles"),
+            Some("5")
+        );
+    }
+
+    #[test]
+    fn validate_subcommand_opt_file_limit_success() {
+        let app = test_cli!().get_matches_from_safe(&["config", "--file_limit", "5"]);
+
+        assert!(app.is_ok())
+    }
+
+    #[test]
+    fn validate_subcommand_opt_file_limit_failure() {
+        let app = test_cli!().get_matches_from_safe(&["config", "--file_limit", "not a usize"]);
+
+        assert!(app.is_err());
+        assert_eq!(app.unwrap_err().kind, ClapError::ValueValidation)
+    }
+
+    #[test]
+    fn validate_subcommand_opt_buf_out_success() {
+        let app = test_cli!().get_matches_from_safe(&["config", "--buf_out", "5"]);
+
+        assert!(app.is_ok())
+    }
+
+    #[test]
+    fn validate_subcommand_opt_buf_out_failure() {
+        let app = test_cli!().get_matches_from_safe(&["config", "--buf_out", "not a usize"]);
+
+        assert!(app.is_err());
+        assert_eq!(app.unwrap_err().kind, ClapError::ValueValidation)
+    }
+
+    #[test]
+    fn validate_subcommand_opt_buf_in_success() {
+        let app = test_cli!().get_matches_from_safe(&["config", "--buf_in", "5"]);
+
+        assert!(app.is_ok())
+    }
+
+    #[test]
+    fn validate_subcommand_opt_buf_in_failure() {
+        let app = test_cli!().get_matches_from_safe(&["config", "--buf_in", "not a usize"]);
+
+        assert!(app.is_err());
+        assert_eq!(app.unwrap_err().kind, ClapError::ValueValidation)
+    }
+
+    #[test]
+    fn validate_subcommand_opt_linereader_eol_success() {
+        let app = test_cli!().get_matches_from_safe(&["config", "--linereader_eol", ":"]);
+
+        assert!(app.is_ok())
+    }
+
+    #[test]
+    fn validate_subcommand_opt_linereader_eol_failure() {
+        let app = test_cli!().get_matches_from_safe(&["config", "--linereader_eol", "not a char"]);
+
+        assert!(app.is_err());
+        assert_eq!(app.unwrap_err().kind, ClapError::ValueValidation)
+    }
+
+    #[test]
+    fn possible_subcommand_opt_factor() {
+        for id in &["B", "K", "M"] {
+            let mult: &str = id.clone().into();
+            let app = test_cli!().get_matches_from_safe(&["config", "--factor", mult]);
+            assert!(app.is_ok());
         }
     }
 }
