@@ -5,6 +5,7 @@ use {
         match_with_log,
         models::{
             assets::{JsonPacket, JsonPointer, ReadKind},
+            check_index,
             error::{ErrorKind, Result},
             get_writer, unwind_json, write_formatted_output, ToBuilder, ToWriter,
         },
@@ -43,7 +44,8 @@ pub(crate) fn spawn_workers(
             debug!("Writer initialized");
             let rx_builder = BuWr_rx;
             let opts = &opts;
-            let mut writer = BufWriter::with_capacity(opts.output_buffer_size(), get_writer(opts.writer()));
+            let mut writer =
+                BufWriter::with_capacity(opts.output_buffer_size(), get_writer(opts.writer()));
             info!("Buffered writer initialized");
             let mut result = || -> Result<()> {
                 // Hot loop
@@ -82,18 +84,7 @@ pub(crate) fn spawn_workers(
                         ))
                     })?;
 
-                    for packet in channel
-                        .iter()
-                        .filter_map(|(ident, p, j)| match opts.regex() {
-                            Some(regex) if regex.on_ident() => {
-                                match regex.pattern().is_match(&ident.to_string()) {
-                                    true => Some((ident, p, j)),
-                                    false => None,
-                                }
-                            }
-                            _ => Some((ident, p, j)),
-                        })
-                    {
+                    for packet in channel.iter() {
                         trace!(
                             "current packet is: {}, {}, {:?}",
                             &packet.0,
@@ -169,19 +160,36 @@ pub(crate) fn spawn_workers(
                     })?;
                     match (item, opts.by_line()) {
                         ((i, read @ ReadKind::Stdin(_)), true) => {
-                            let mut read_line = LineReader::with_delimiter_and_capacity(opts.linereader_eol(), opts.input_buffer_size(), read.into_inner());
+                            let mut read_line = LineReader::with_delimiter_and_capacity(
+                                opts.linereader_eol(),
+                                opts.input_buffer_size(),
+                                read.into_inner(),
+                            );
                             let mut index = 1;
                             while let Some(slice) = read_line.next_line() {
-                                debug!("Processing line {} of input {}...", index, i);
-                                let reader = slice?.iter().map(|&b| Ok(b));
-                                unwind_json(&opts, index, reader, data_tx.clone())?;
-                                index += 1;
+                                if check_index(opts.regex(), index) {
+                                    debug!("Processing line {} of input {}...", index, i);
+                                    let reader = slice?.iter().map(|&b| Ok(b));
+                                    unwind_json(&opts, index, reader, data_tx.clone())?;
+                                    index += 1;
+                                } else {
+                                    debug!("Skipping line {} of input {}...", index, i);
+                                    index += 1;
+                                }
                             }
                         }
                         ((index, read), _) => {
-                            debug!("Processing input {}...", index);
-                            let reader = BufReader::with_capacity(opts.input_buffer_size(), read.into_inner()).bytes();
-                            unwind_json(&opts, index, reader, data_tx)?;
+                            if check_index(opts.regex(), index) {
+                                debug!("Processing input {}...", index);
+                                let reader = BufReader::with_capacity(
+                                    opts.input_buffer_size(),
+                                    read.into_inner(),
+                                )
+                                .bytes();
+                                unwind_json(&opts, index, reader, data_tx)?;
+                            } else {
+                                debug!("Skipping input {}...", index);
+                            }
                         }
                     }
                 }
@@ -210,7 +218,7 @@ pub(crate) fn spawn_workers(
                             ))
                         })??;
                     match defer {
-                        Ok(_) => match_with_log!(Ok(()), debug!("Reader closing... success")),
+                        Ok(_) => match_with_log!(Ok(()), info!("Reader closing... success")),
                         Err(e) => match_with_log!(Err(e), warn!("Reader closing... with error")),
                     }
                 }
