@@ -36,7 +36,7 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
         .arg(Arg::with_name("line")
             .short("l")
             .long("line")
-            .help("Set stdin to read a JSON string from each line")
+            .help("Set stdin to read a JSON doc from each line")
         )
         .arg(Arg::with_name("append")
                 .short("a")
@@ -222,7 +222,6 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
                         .help("Set stdin linereader's EOL character, ignored if '--lines' is not set")
                 )
         )
-    //.get_matches()
 }
 
 pub struct ProgramArgs {
@@ -285,12 +284,8 @@ impl<'a, 'b> ProgramArgs {
 
         let regex: Option<RegexOptions> =
             match (store.value_of("regex"), store.value_of("regex_column")) {
-                // Checks to make sure 'column' is being used in the output
-                (Some(_), Some(column)) if Field::try_from_whitelist(column, &format).is_err() => {
-                    None
-                }
                 (Some(pattern), Some(column)) => Some(RegexOptions::new(pattern, column.into())),
-                (Some(_), None) => unreachable!("Default value should be supplied by clap"),
+                (Some(_), None) => unreachable!("Column default value should be supplied by clap"),
                 (None, _) => None,
             };
 
