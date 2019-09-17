@@ -65,6 +65,12 @@ impl From<Box<dyn Error>> for ErrorKind {
     }
 }
 
+impl From<std::fmt::Error> for ErrorKind {
+    fn from(e: std::fmt::Error) -> Self {
+        ErrorKind::Message(format!("{}", e))
+    }
+}
+
 impl std::fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
