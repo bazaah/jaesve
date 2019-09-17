@@ -42,15 +42,14 @@ pub enum ReadFrom {
 // characters, they are replaced with � (U+FFFD)
 impl std::fmt::Display for ReadFrom {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let display = match self {
-            ReadFrom::File(path) => format!(
+        match self {
+            ReadFrom::File(path) => write!(
+                f,
                 "File: {}",
                 path.file_name().unwrap_or_default().to_string_lossy()
             ),
-            ReadFrom::Stdin => format!("Stdin"),
-        };
-
-        write!(f, "{}", display)
+            ReadFrom::Stdin => write!(f, "Stdin"),
+        }
     }
 }
 
@@ -349,6 +348,52 @@ impl std::fmt::Display for Guard {
             Guard::None => write!(f, ""),
         }
     }
+}
+
+pub struct JmesPath {
+    inner: String,
+}
+
+impl JmesPath {
+    pub fn try_new<S: AsRef<str>>(v: &Vec<S>) -> Result<Self, ErrorKind> {
+        let mut inner = String::with_capacity(v.len() * 5);
+
+        for (first, _, (item, kind)) in v
+            .iter()
+            .map(|s| s.as_ref())
+            .zip(JmesPath::generate_path_kind(v))
+            .identify_first_last()
+        {
+            match kind {
+                JmesKind::Object => {
+                    if first {
+                        write!(&mut inner, "{}", item)?;
+                    } else {
+                        write!(&mut inner, ".{}", item)?;
+                    }
+                }
+                JmesKind::Array => {
+                    write!(&mut inner, "[{}]", item)?;
+                }
+            }
+        }
+
+        Ok(JmesPath { inner })
+    }
+
+    fn generate_path_kind<S: AsRef<str>>(v: &Vec<S>) -> impl Iterator<Item = JmesKind> + '_ {
+        v.iter()
+            .map(|s| s.as_ref())
+            .map(|s| match s.parse::<usize>() {
+                Ok(_) => JmesKind::Array,
+                Err(_) => JmesKind::Object,
+            })
+    }
+}
+
+enum JmesKind {
+    Object,
+    Array,
 }
 
 /// Struct responsible for turning each unwound
