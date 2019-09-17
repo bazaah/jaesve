@@ -3,7 +3,7 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            assets::{Field, IdentifyFirstLast, ReadFrom, ReadKind},
+            assets::{Field, IdentifyFirstLast, ReadFrom, ReadKind, RegexOptions},
             builder::{Builder, Output},
             error::{ErrorKind, Result},
             scan::JsonScan,
@@ -363,4 +363,12 @@ where
     writeln!(w, "")?;
 
     Ok(())
+}
+
+/// Helper function for early parse skipping, based on input ident
+pub fn check_index(regex: Option<&RegexOptions>, ident: usize) -> bool {
+    match regex {
+        Some(regex) if regex.is_ident() => regex.pattern().is_match(&ident.to_string()),
+        _ => true,
+    }
 }
