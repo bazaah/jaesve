@@ -267,7 +267,7 @@ impl RegexOptions {
         self.field
     }
 
-    pub fn on_ident(&self) -> bool {
+    pub fn is_ident(&self) -> bool {
         match self.field {
             Field::Identifier => true,
             _ => false,
