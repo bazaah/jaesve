@@ -16,7 +16,7 @@ use {
         io::{BufReader, BufWriter, Read as ioRead},
         str::from_utf8,
         sync::mpsc::{sync_channel as syncQueue, Receiver, SyncSender},
-        thread::{Builder as thBuilder, JoinHandle},
+        thread::{Builder as Thread, JoinHandle},
     },
 };
 
@@ -38,7 +38,7 @@ pub(crate) fn spawn_workers(
         syncQueue(0);
 
     // Writer
-    let thWriter = thBuilder::new()
+    let thWriter = Thread::new()
         .name(format!("Writer"))
         .spawn(move || -> Result<()> {
             debug!("Writer initialized");
@@ -66,7 +66,7 @@ pub(crate) fn spawn_workers(
         })?;
 
     // Builder
-    let thBuilder = thBuilder::new()
+    let thBuilder = Thread::new()
         .name(format!("Builder"))
         .spawn(move || -> Result<()> {
             debug!("Builder initialized");
@@ -141,7 +141,7 @@ pub(crate) fn spawn_workers(
         })?;
 
     // Reader
-    let thReader: JoinHandle<Result<()>> = thBuilder::new()
+    let thReader: JoinHandle<Result<()>> = Thread::new()
         .name(format!("Reader"))
         .spawn(move || -> Result<()> {
             debug!("Reader initialized");
