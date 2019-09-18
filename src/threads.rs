@@ -86,7 +86,7 @@ pub(crate) fn spawn_workers(
 
                     for packet in channel.iter() {
                         trace!(
-                            "current packet is: {}, {}, {:?}",
+                            "current packet is: {}, {:?}, {:?}",
                             &packet.0,
                             &packet.1,
                             from_utf8(&packet.2)

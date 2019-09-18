@@ -7,11 +7,11 @@ use {
     clap::{crate_authors, crate_version, App, Arg, ArgMatches as Matches, SubCommand},
     regex::Regex,
     simplelog::LevelFilter,
-    std::collections::HashSet,
+    std::{collections::{HashSet, hash_map::RandomState}, iter::FromIterator,},
 };
 
 // Subset of all Field variants that can be used for valuable output
-const VALID_FIELDS: [Field; 4] = [Field::Identifier, Field::Pointer, Field::Type, Field::Value];
+const VALID_FIELDS: [Field; 5] = [Field::Identifier, Field::Pointer, Field::Type, Field::Value, Field::JmesPath];
 
 pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
     App::new("jaesve")
@@ -367,6 +367,10 @@ impl<'a, 'b> ProgramArgs {
 
     pub fn linereader_eol(&self) -> u8 {
         self.subcommand_config.linereader_eol
+    }
+
+    pub fn relevant_fields(&self) -> HashSet<Field> {
+        self.format().iter().map(|f| -> Option<Field> {Some(*f)}).chain([self.regex().map(|regex| regex.on_field())].iter().map(|f| *f)).filter_map(|o: Option<Field>| o.map(|f| f)).collect()
     }
 }
 

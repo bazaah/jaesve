@@ -1,23 +1,39 @@
 use {
-    crate::models::{assets::JmesPath, error::{Result, ErrorKind}},
+    crate::{
+        cli::ProgramArgs,
+        models::{
+            assets::{Field, JmesPath},
+            error::{ErrorKind, Result},
+        },
+    },
     std::{fmt::Display, sync::Arc},
 };
 
 pub trait Pointer<T: Into<PointerKind> = PointerKind> {
-    fn clone_extend<D: Display + Into<PointerParts>>(&mut self, other: D) -> T;
+    fn clone_extend<D: Display + Into<PointerParts>>(&self, other: D) -> T;
 
     fn as_complete(&self) -> String;
 
     fn as_parts(&self) -> Result<&Vec<PointerParts>>;
 }
 
+#[derive(Debug)]
 pub enum PointerKind {
     Simple(String),
     Complex(Complex),
 }
 
+impl PointerKind {
+    pub fn new(opts: &ProgramArgs) -> Self {
+        match opts.relevant_fields().contains(&Field::JmesPath) {
+            true => PointerKind::Complex(Complex::new()),
+            false => PointerKind::Simple(String::new()),
+        }
+    }
+}
+
 impl Pointer for PointerKind {
-    fn clone_extend<D: Display + Into<PointerParts>>(&mut self, other: D) -> PointerKind {
+    fn clone_extend<D: Display + Into<PointerParts>>(&self, other: D) -> PointerKind {
         match self {
             Self::Simple(s) => Self::Simple(format!("{}/{}", s, other)),
             Self::Complex(c) => Self::Complex(c.internal_clone_extend(other)),
@@ -34,7 +50,7 @@ impl Pointer for PointerKind {
     fn as_parts(&self) -> Result<&Vec<PointerParts>> {
         match self {
             Self::Simple(_) => Err(ErrorKind::Message(format!("yada"))),
-            Self::Complex(c) => Ok(&c.inner)
+            Self::Complex(c) => Ok(&c.inner),
         }
     }
 }
@@ -49,10 +65,11 @@ impl Complex {
         Complex { inner: Vec::new() }
     }
 
-    fn internal_clone_extend<P: Into<PointerParts>>(&mut self, item: P) -> Complex {
-        self.inner
+    fn internal_clone_extend<P: Into<PointerParts>>(&self, item: P) -> Complex {
+        let mut new = self.clone();
+        new.inner
             .extend_from_slice(&[PointerParts::Slash, item.into()]);
-        self.clone()
+        new
     }
 }
 

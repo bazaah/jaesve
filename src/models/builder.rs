@@ -1,6 +1,6 @@
 use {
     crate::models::{
-        assets::{Delimiter, Field, Guard, JType, RegexOptions},
+        assets::{Delimiter, Field, Guard, JType, RegexOptions, JmesPath},
         error::ErrorKind,
     },
     fnv::FnvHashMap,
@@ -28,6 +28,8 @@ where
     fn pointer(&self) -> Result<Self::Block, Self::Error>;
 
     fn value(&self) -> Result<Self::Block, Self::Error>;
+
+    fn jmes(&self) -> Result<Self::Block, Self::Error>;
 }
 
 /// Enum containing every valid output kind
@@ -40,6 +42,7 @@ pub enum BlockKind {
     Type(JType),
     Pointer(String),
     Value(Option<String>),
+    Jmes(JmesPath)
 }
 
 impl std::fmt::Display for BlockKind {
@@ -51,6 +54,7 @@ impl std::fmt::Display for BlockKind {
             BlockKind::Type(t) => write!(f, "{}", t),
             BlockKind::Pointer(p) => write!(f, "{}", p),
             BlockKind::Value(v) => write!(f, "{}", v.as_ref().unwrap_or(&String::default())),
+            BlockKind::Jmes(j) => write!(f, "{}", j),
         }
     }
 }
@@ -67,6 +71,7 @@ pub struct Output {
 // 3 == type
 // 4 == jptr
 // 5 == value
+// 6 == jmes
 // Remember to update OutputBuilder's done() if you change these
 impl Output {
     fn get_ident(&self) -> Option<&BlockKind> {
@@ -92,6 +97,10 @@ impl Output {
     fn get_value(&self) -> Option<&BlockKind> {
         self.blocks.get(&5)
     }
+
+    fn get_jmes(&self) -> Option<&BlockKind> {
+        self.blocks.get(&6)
+    }
 }
 
 impl<D> Builder<D> for Output
@@ -116,6 +125,10 @@ where
                 .ok_or_else(|| ErrorKind::MissingField(format!("{}", f))),
             f @ Field::Value => self
                 .get_value()
+                .cloned()
+                .ok_or_else(|| ErrorKind::MissingField(format!("{}", f))),
+            f @ Field::JmesPath => self
+                .get_jmes()
                 .cloned()
                 .ok_or_else(|| ErrorKind::MissingField(format!("{}", f))),
             _ => unreachable!("Make sure clap only allows valid fields to hit this"),
@@ -157,17 +170,23 @@ where
             .cloned()
             .ok_or_else(|| ErrorKind::MissingField(format!("{}", Field::Value)))
     }
+
+    fn jmes(&self) -> Result<Self::Block, Self::Error> {
+        self.get_jmes()
+            .cloned()
+            .ok_or_else(|| ErrorKind::MissingField(format!("{}", Field::Value)))
+    }
 }
 
 /// Used to build up an Output struct
 #[derive(Debug)]
 pub struct OutputBuilder {
-    blocks: [Option<BlockKind>; 6],
+    blocks: [Option<BlockKind>; 7],
 }
 
 impl OutputBuilder {
     pub fn new() -> Self {
-        let blocks: [Option<BlockKind>; 6] = Default::default();
+        let blocks: [Option<BlockKind>; 7] = Default::default();
         Self { blocks }
     }
 
@@ -199,6 +218,9 @@ impl OutputBuilder {
                     }
                     v @ BlockKind::Value(_) => {
                         blocks.insert(5, v);
+                    }
+                    j @ BlockKind::Jmes(_) => {
+                        blocks.insert(6, j);
                     }
                 }
             }
@@ -234,6 +256,14 @@ impl OutputBuilder {
 
     pub fn value(mut self, val: Option<String>) -> Self {
         self.blocks[5] = Some(BlockKind::Value(val));
+        self
+    }
+
+    pub fn jmes_path(mut self, jmes: Result<JmesPath, ErrorKind>) -> Self {
+        match jmes {
+            Ok(jmes) => self.blocks[6] = Some(BlockKind::Jmes(jmes)),
+            Err(e) => warn!("Could not assemble jmespath... skipping"),
+        }
         self
     }
 
@@ -287,6 +317,10 @@ impl OutputBuilder {
                         None => None,
                         _ => Some(self),
                     },
+                    _ => Some(self),
+                },
+                Field::JmesPath => match &self.blocks[6] {
+                    Some(BlockKind::Jmes(ref j)) if !regex.pattern().is_match(j.as_ref()) => None,
                     _ => Some(self),
                 },
             },

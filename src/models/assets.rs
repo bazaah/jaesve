@@ -132,6 +132,7 @@ pub enum Field {
     Type,
     Pointer,
     Value,
+    JmesPath,
 }
 
 impl Field {
@@ -145,6 +146,7 @@ impl Field {
             "type" => Ok(Field::Type),
             "jptr" => Ok(Field::Pointer),
             "value" => Ok(Field::Value),
+            "jmes" => Ok(Field::JmesPath),
             _ => Err(ErrorKind::Message(format!("'{}' is not a valid field", s))),
         }
     }
@@ -194,6 +196,7 @@ impl From<&str> for Field {
             "type" => Field::Type,
             "jptr" => Field::Pointer,
             "value" => Field::Value,
+            "jmes" => Field::JmesPath,
             _ => unreachable!("Called infallible conversion to Field on a fallible conversion, use Field::try_from instead"),
         }
     }
@@ -208,6 +211,7 @@ impl From<Field> for &str {
             Field::Type => "type",
             Field::Pointer => "jptr",
             Field::Value => "value",
+            Field::JmesPath => "jmes",
         }
     }
 }
@@ -221,6 +225,7 @@ impl From<BlockKind> for Field {
             BlockKind::Type(_) => Field::Type,
             BlockKind::Pointer(_) => Field::Pointer,
             BlockKind::Value(_) => Field::Value,
+            BlockKind::Jmes(_) => Field::JmesPath,
         }
     }
 }
@@ -234,6 +239,7 @@ impl std::fmt::Display for Field {
             Field::Type => write!(f, "type"),
             Field::Pointer => write!(f, "jptr"),
             Field::Value => write!(f, "value"),
+            Field::JmesPath => write!(f, "jmes"),
         }
     }
 }
@@ -351,12 +357,13 @@ impl std::fmt::Display for Guard {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct JmesPath {
     inner: String,
 }
 
 impl JmesPath {
-    pub fn try_from<P: Pointer>(p: P) -> Result<Self, ErrorKind> {
+    pub fn try_from<P: Pointer>(p: &P) -> Result<Self, ErrorKind> {
         let parts = p.as_parts()?;
         let mut inner = String::with_capacity(
             parts
@@ -369,7 +376,14 @@ impl JmesPath {
                 .fold(0, |acc, num| acc + num),
         );
 
-        for (first, _, item) in parts.iter().identify_first_last() {
+        for (first, _, item) in parts
+            .iter()
+            .filter(|part| match part {
+                PointerParts::Slash => false,
+                _ => true,
+            })
+            .identify_first_last()
+        {
             match item {
                 PointerParts::Object(s) => {
                     if first {
@@ -389,17 +403,29 @@ impl JmesPath {
     }
 }
 
+impl AsRef<str> for JmesPath {
+    fn as_ref(&self) -> &str {
+        &self.inner
+    }
+}
+
+impl std::fmt::Display for JmesPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.inner)
+    }
+}
+
 /// Struct responsible for turning each unwound
 /// JSON object into the components that Output / Builder
 /// will use
 pub struct JsonPointer<'j> {
     ident: usize,
-    queue: VecDeque<(&'j JsonValue, String)>,
+    queue: VecDeque<(&'j JsonValue, PointerKind)>,
     pbuf: Vec<OutputBuilder>,
 }
 
 impl<'j> JsonPointer<'j> {
-    pub fn new(json: &'j JsonValue, meta: (usize, String, Option<usize>)) -> Self {
+    pub fn new(json: &'j JsonValue, meta: (usize, PointerKind, Option<usize>)) -> Self {
         let (mut queue, pbuf) = match meta.2 {
             Some(hint) => (VecDeque::with_capacity(hint), Vec::with_capacity(hint)),
             None => (VecDeque::new(), Vec::new()),
@@ -418,73 +444,79 @@ impl<'j> JsonPointer<'j> {
         loop {
             let value = self.queue.pop_front();
             match value {
-                Some((jObject(map), ref s)) => {
+                Some((jObject(map), ref ptr)) => {
                     for (k, v) in map.iter() {
-                        let new_path = format!("{}/{}", s, k);
+                        let new_path = ptr.clone_extend(k.as_str());
                         if v.is_object() {
                             self.pbuf.push(
                                 OutputBuilder::new()
                                     .ident(self.ident)
-                                    .pointer(new_path.clone())
+                                    .pointer(new_path.as_complete())
                                     .value(None)
-                                    .type_of(v.into()),
+                                    .type_of(v.into())
+                                    .jmes_path(JmesPath::try_from(&new_path)),
                             );
                         }
                         if v.is_array() {
                             self.pbuf.push(
                                 OutputBuilder::new()
                                     .ident(self.ident)
-                                    .pointer(new_path.clone())
+                                    .pointer(new_path.as_complete())
                                     .value(None)
-                                    .type_of(v.into()),
+                                    .type_of(v.into())
+                                    .jmes_path(JmesPath::try_from(&new_path)),
                             );
                         }
                         self.queue.push_back((v, new_path));
                     }
                 }
-                Some((jArray(a), ref s)) => {
+                Some((jArray(a), ref ptr)) => {
                     for (i, v) in a.iter().enumerate() {
-                        let new_path = format!("{}/{}", s, i);
+                        let new_path = ptr.clone_extend(i);
                         self.queue.push_back((v, new_path));
                     }
                 }
-                Some((jString(val), ref jptr)) => {
+                Some((jString(val), ref ptr)) => {
                     self.pbuf.push(
                         OutputBuilder::new()
                             .ident(self.ident)
-                            .pointer(String::from(jptr))
+                            .pointer(ptr.as_complete())
                             .value(Some(val.to_string()))
-                            .type_of(value.as_ref().unwrap().0.into()),
+                            .type_of(value.as_ref().unwrap().0.into())
+                            .jmes_path(JmesPath::try_from(ptr)),
                     );
                     break;
                 }
-                Some((jNumber(val), ref jptr)) => {
+                Some((jNumber(val), ref ptr)) => {
                     self.pbuf.push(
                         OutputBuilder::new()
                             .ident(self.ident)
-                            .pointer(String::from(jptr))
+                            .pointer(ptr.as_complete())
                             .value(Some(val.to_string()))
-                            .type_of(value.as_ref().unwrap().0.into()),
+                            .type_of(value.as_ref().unwrap().0.into())
+                            .jmes_path(JmesPath::try_from(ptr)),
                     );
                     break;
                 }
-                Some((jBool(val), ref jptr)) => {
+                Some((jBool(val), ref ptr)) => {
                     self.pbuf.push(
                         OutputBuilder::new()
                             .ident(self.ident)
-                            .pointer(String::from(jptr))
+                            .pointer(ptr.as_complete())
                             .value(Some(val.to_string()))
-                            .type_of(value.as_ref().unwrap().0.into()),
+                            .type_of(value.as_ref().unwrap().0.into())
+                            .jmes_path(JmesPath::try_from(ptr)),
                     );
                     break;
                 }
-                Some((tp @ jNull, jptr)) => {
+                Some((tp @ jNull, ptr)) => {
                     self.pbuf.push(
                         OutputBuilder::new()
                             .ident(self.ident)
-                            .pointer(jptr)
+                            .pointer(ptr.as_complete())
                             .value(Some(String::from("null")))
-                            .type_of(tp.into()),
+                            .type_of(tp.into())
+                            .jmes_path(JmesPath::try_from(&ptr)),
                     );
                     break;
                 }
@@ -508,7 +540,7 @@ impl<'j> Iterator for JsonPointer<'j> {
 /// sends to JsonPointer
 pub struct JsonPacket {
     ident: usize,
-    base_path: String,
+    base_path: PointerKind,
     json: JsonValue,
 }
 
@@ -524,18 +556,18 @@ impl JsonPacket {
         }
     }
 
-    pub fn into_inner(self) -> (JsonValue, (usize, String, Option<usize>)) {
+    pub fn into_inner(self) -> (JsonValue, (usize, PointerKind, Option<usize>)) {
         let hint = self.size_hint();
         (self.json, (self.ident, self.base_path, hint))
     }
 }
 
-impl TryFrom<(usize, String, Vec<u8>)> for JsonPacket {
+impl TryFrom<(usize, PointerKind, Vec<u8>)> for JsonPacket {
     type Error = ErrorKind;
 
-    fn try_from(packet: (usize, String, Vec<u8>)) -> std::result::Result<Self, Self::Error> {
+    fn try_from(packet: (usize, PointerKind, Vec<u8>)) -> std::result::Result<Self, Self::Error> {
         trace!(
-            "trying to convert: {} {:?}",
+            "trying to convert: {:?} {:?}",
             &packet.1,
             from_utf8(&packet.2)
         );

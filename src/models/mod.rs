@@ -6,6 +6,7 @@ use {
             assets::{Field, IdentifyFirstLast, ReadFrom, ReadKind, RegexOptions},
             builder::{Builder, Output},
             error::{ErrorKind, Result},
+            pointer::{Pointer, PointerKind},
             scan::JsonScan,
         },
     },
@@ -26,7 +27,7 @@ pub mod pointer;
 pub mod scan;
 
 /// Type def for the reader -> builder channel
-pub type ToBuilder = (usize, String, Vec<u8>);
+pub type ToBuilder = (usize, PointerKind, Vec<u8>);
 /// Type def for the builder -> writer channel
 pub type ToWriter = Output;
 
@@ -168,7 +169,7 @@ where
                     opts,
                     ident,
                     &mut scanner,
-                    String::default(),
+                    PointerKind::new(opts),
                     channel.clone(),
                     b,
                 )?;
@@ -179,7 +180,7 @@ where
                     opts,
                     ident,
                     &mut scanner,
-                    String::default(),
+                    PointerKind::new(opts),
                     channel.clone(),
                     b,
                 )?;
@@ -212,7 +213,7 @@ pub fn unwind_recursive<I>(
     opts: &ProgramArgs,
     ident: usize,
     scanner: &mut JsonScan<I>,
-    jptr: String,
+    jptr: PointerKind,
     channel: SyncSender<ToBuilder>,
     prefix_byte: u8,
 ) -> Result<()>
@@ -222,7 +223,7 @@ where
     // Handle the '{' or '[' byte that the outside function might have
     let mut buffer: Vec<u8> = vec![prefix_byte];
     let mut array_count = 0usize;
-    trace!("BEFORE: ({}, {:?})", &*jptr, from_utf8(&buffer));
+    trace!("BEFORE: ({:?}, {:?})", &jptr, from_utf8(&buffer));
     loop {
         match scanner.next() {
             Some(Ok(b @ b'[')) if scanner.outside_quotes() => {
@@ -231,12 +232,10 @@ where
                     ident,
                     scanner,
                     match prefix_byte {
-                        b'[' => format!("{}/{}", jptr, array_count),
-                        b'{' => format!(
-                            "{}/{}",
-                            jptr,
-                            from_utf8(calculate_key(&buffer, scanner.offsets()).as_slice())?
-                        ),
+                        b'[' => jptr.clone_extend(array_count),
+                        b'{' => jptr.clone_extend(from_utf8(
+                            calculate_key(&buffer, scanner.offsets()).as_slice(),
+                        )?),
                         _ => unreachable!(),
                     },
                     channel.clone(),
@@ -252,12 +251,10 @@ where
                     ident,
                     scanner,
                     match prefix_byte {
-                        b'[' => format!("{}/{}", jptr, array_count),
-                        b'{' => format!(
-                            "{}/{}",
-                            jptr,
-                            from_utf8(calculate_key(&buffer, scanner.offsets()).as_slice())?
-                        ),
+                        b'[' => jptr.clone_extend(array_count),
+                        b'{' => jptr.clone_extend(from_utf8(
+                            calculate_key(&buffer, scanner.offsets()).as_slice(),
+                        )?),
                         _ => unreachable!(),
                     },
                     channel.clone(),
@@ -281,7 +278,7 @@ where
         }
     }
 
-    trace!("AFTER: ({}, {:?})", &*jptr, from_utf8(&buffer));
+    trace!("AFTER: ({:?}, {:?})", &jptr, from_utf8(&buffer));
 
     channel.send((ident, jptr, buffer)).map_err(|_| {
         ErrorKind::UnexpectedChannelClose(format!(
@@ -296,7 +293,7 @@ where
 /// Sends the entire read stream to the builder
 /// Only called if the doc is not a object or array
 pub fn unwind_single<I>(
-    _opts: &ProgramArgs,
+    opts: &ProgramArgs,
     ident: usize,
     scanner: &mut JsonScan<I>,
     prefix_byte: u8,
@@ -313,7 +310,7 @@ where
         .collect();
 
     channel
-        .send((ident, String::default(), buffer?))
+        .send((ident, PointerKind::new(opts), buffer?))
         .map_err(|_| {
             ErrorKind::UnexpectedChannelClose(format!(
                 "builder in |reader -> builder| channel has hung up"
