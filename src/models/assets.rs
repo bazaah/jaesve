@@ -2,6 +2,7 @@ use {
     crate::models::{
         builder::{BlockKind, OutputBuilder},
         error::ErrorKind,
+        pointer::{Pointer, PointerKind, PointerParts},
     },
     serde_json::{
         from_slice, Value as JsonValue,
@@ -355,45 +356,37 @@ pub struct JmesPath {
 }
 
 impl JmesPath {
-    pub fn try_new<S: AsRef<str>>(v: &Vec<S>) -> Result<Self, ErrorKind> {
-        let mut inner = String::with_capacity(v.len() * 5);
+    pub fn try_from<P: Pointer>(p: P) -> Result<Self, ErrorKind> {
+        let parts = p.as_parts()?;
+        let mut inner = String::with_capacity(
+            parts
+                .iter()
+                .map(|kind| match kind {
+                    PointerParts::Slash => 1,
+                    PointerParts::Array(_) => 3,
+                    PointerParts::Object(s) => s.len(),
+                })
+                .fold(0, |acc, num| acc + num),
+        );
 
-        for (first, _, (item, kind)) in v
-            .iter()
-            .map(|s| s.as_ref())
-            .zip(JmesPath::generate_path_kind(v))
-            .identify_first_last()
-        {
-            match kind {
-                JmesKind::Object => {
+        for (first, _, item) in parts.iter().identify_first_last() {
+            match item {
+                PointerParts::Object(s) => {
                     if first {
-                        write!(&mut inner, "{}", item)?;
+                        write!(&mut inner, "{}", s)?;
                     } else {
-                        write!(&mut inner, ".{}", item)?;
+                        write!(&mut inner, ".{}", s)?;
                     }
                 }
-                JmesKind::Array => {
-                    write!(&mut inner, "[{}]", item)?;
+                PointerParts::Array(u) => {
+                    write!(&mut inner, "[{}]", u)?;
                 }
+                PointerParts::Slash => {}
             }
         }
 
         Ok(JmesPath { inner })
     }
-
-    fn generate_path_kind<S: AsRef<str>>(v: &Vec<S>) -> impl Iterator<Item = JmesKind> + '_ {
-        v.iter()
-            .map(|s| s.as_ref())
-            .map(|s| match s.parse::<usize>() {
-                Ok(_) => JmesKind::Array,
-                Err(_) => JmesKind::Object,
-            })
-    }
-}
-
-enum JmesKind {
-    Object,
-    Array,
 }
 
 /// Struct responsible for turning each unwound

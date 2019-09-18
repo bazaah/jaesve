@@ -22,6 +22,7 @@ use {
 pub mod assets;
 pub mod builder;
 pub mod error;
+pub mod pointer;
 pub mod scan;
 
 /// Type def for the reader -> builder channel
