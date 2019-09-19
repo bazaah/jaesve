@@ -2,7 +2,7 @@ use {
     crate::{
         cli::ProgramArgs,
         models::{
-            assets::{Field, JmesPath},
+            assets::Field,
             error::{ErrorKind, Result},
         },
     },
