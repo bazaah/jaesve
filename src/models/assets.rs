@@ -365,7 +365,7 @@ pub struct JmesPath {
 impl JmesPath {
     pub fn try_from<P: Pointer>(p: &P) -> Result<Self, ErrorKind> {
         let parts = p.as_parts()?;
-        // Check for unsupported JSON, i.e string literals
+        // Check for unsupported JSON, i.e JSON literals
         if !(parts.len() == 0) {
             let mut inner = String::with_capacity(
                 parts
