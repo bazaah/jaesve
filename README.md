@@ -33,14 +33,20 @@ Jaesve comes with a CLI, courtesy of [clap.rs](https://github.com/clap-rs/clap).
   - Default: writes to stdout
 - `-E` `--regex` Set a regex to filter output
 - `-c` `--column` Sets field to match regex on
-  - Possible: `ident, jptr, type, value`
+  - Possible: `ident, jptr, type, value, jmes`
 - `-f` `--format` A dot '.' separated list of fields describing how output is formatted
   - Default: `ident.jptr.type.value`
-  - Possible: `ident, jptr, type, value`
+  - Possible: `ident, jptr, type, value, jmes`
 - `-d` `--delim` Sets delimiter between output fields
   - Default: `,`
 - `-g` `--guard` Set field quote character
   - Default: `"`
+
+#### SubCommands
+
+- `config` Configure various program intrinsics
+  - These parameters are **unstable** and may change in the future
+  - `config --help` for the current list
 
 #### Args
 
@@ -61,10 +67,10 @@ In preliminary tests it parsed 2G of JSON in 3 minutes.
 Jaesve is written to minimize memory usage. It uses a stream based approach to parsing JSON, and attempts to unroll nested objects. Its maximum memory footprint can be described as follows:
 
 - `sizeof largest object/array` +
-- `sizeof combined elements NOT including any object/array from doc start to largest object/array` + 
+- `sizeof combined elements NOT including any object/array from doc start to largest object/array` +
 - `program overhead`
 
-TLDR: the more deeply nested objects/arrays you have the larger the memory footprint.
+TLDR: the more deeply nested and larger the objects/arrays, the larger the memory footprint.
 
 ### Example Usage
 
