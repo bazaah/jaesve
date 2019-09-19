@@ -365,41 +365,49 @@ pub struct JmesPath {
 impl JmesPath {
     pub fn try_from<P: Pointer>(p: &P) -> Result<Self, ErrorKind> {
         let parts = p.as_parts()?;
-        let mut inner = String::with_capacity(
-            parts
+        // Check for unsupported JSON, i.e string literals
+        if !(parts.len() == 0) {
+            let mut inner = String::with_capacity(
+                parts
+                    .iter()
+                    .map(|kind| match kind {
+                        PointerParts::Slash => 1,
+                        PointerParts::Array(_) => 3,
+                        PointerParts::Object(s) => 1 + s.len(),
+                    })
+                    .fold(0, |acc, num| acc + num),
+            );
+
+            for (first, _, item) in parts
                 .iter()
-                .map(|kind| match kind {
-                    PointerParts::Slash => 1,
-                    PointerParts::Array(_) => 3,
-                    PointerParts::Object(s) => s.len(),
+                .filter(|part| match part {
+                    PointerParts::Slash => false,
+                    _ => true,
                 })
-                .fold(0, |acc, num| acc + num),
-        );
-
-        for (first, _, item) in parts
-            .iter()
-            .filter(|part| match part {
-                PointerParts::Slash => false,
-                _ => true,
-            })
-            .identify_first_last()
-        {
-            match item {
-                PointerParts::Object(s) => {
-                    if first {
-                        write!(&mut inner, "{}", s)?;
-                    } else {
-                        write!(&mut inner, ".{}", s)?;
+                .identify_first_last()
+            {
+                match item {
+                    PointerParts::Object(s) => {
+                        if first {
+                            write!(&mut inner, "{}", s)?;
+                        } else {
+                            write!(&mut inner, ".{}", s)?;
+                        }
                     }
+                    PointerParts::Array(u) => {
+                        write!(&mut inner, "[{}]", u)?;
+                    }
+                    PointerParts::Slash => {}
                 }
-                PointerParts::Array(u) => {
-                    write!(&mut inner, "[{}]", u)?;
-                }
-                PointerParts::Slash => {}
             }
-        }
 
-        Ok(JmesPath { inner })
+            Ok(JmesPath { inner })
+        } else {
+            // If unsupported, return what appears to be the standard response
+            Ok(JmesPath {
+                inner: String::from("null"),
+            })
+        }
     }
 }
 
