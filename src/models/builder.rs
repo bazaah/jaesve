@@ -1,6 +1,6 @@
 use {
     crate::models::{
-        assets::{Delimiter, Field, Guard, JType, RegexOptions, JmesPath},
+        assets::{Delimiter, Field, Guard, JType, JmesPath, RegexOptions},
         error::ErrorKind,
     },
     fnv::FnvHashMap,
@@ -42,7 +42,7 @@ pub enum BlockKind {
     Type(JType),
     Pointer(String),
     Value(Option<String>),
-    Jmes(JmesPath)
+    Jmes(JmesPath),
 }
 
 impl std::fmt::Display for BlockKind {
