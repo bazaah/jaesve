@@ -95,6 +95,19 @@ impl Error for ErrorKind {
     }
 }
 
+pub(crate) trait ErrContext<T, E> {
+    fn context<C>(self, context: C) -> std::result::Result<T, (E, C)>;
+}
+
+impl<T, E> ErrContext<T, E> for std::result::Result<T, E> {
+    fn context<C>(self, context: C) -> std::result::Result<T, (E, C)> {
+        match self {
+            Ok(res) => Ok(res),
+            Err(err) => Err((err, context)),
+        }
+    }
+}
+
 /// Handles program return codes
 pub(crate) enum ProgramExit<T>
 where
