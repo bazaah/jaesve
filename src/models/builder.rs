@@ -262,7 +262,7 @@ impl OutputBuilder {
     pub fn jmes_path(mut self, jmes: Result<JmesPath, ErrorKind>) -> Self {
         match jmes {
             Ok(jmes) => self.blocks[6] = Some(BlockKind::Jmes(jmes)),
-            Err(e) => warn!("Could not assemble jmespath... skipping"),
+            Err(_) => warn!("Could not assemble jmespath... skipping"),
         }
         self
     }

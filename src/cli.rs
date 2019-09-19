@@ -7,10 +7,7 @@ use {
     clap::{crate_authors, crate_version, App, Arg, ArgMatches as Matches, SubCommand},
     regex::Regex,
     simplelog::LevelFilter,
-    std::{
-        collections::{hash_map::RandomState, HashSet},
-        iter::FromIterator,
-    },
+    std::collections::HashSet,
 };
 
 // Subset of all Field variants that can be used for valuable output
@@ -140,7 +137,7 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
                         Err(e) => Err(format!("{}", e))
                     }
                 })
-                .help("A dot '.' separated list of fields describing how output is formatted")
+                .help("A dot '.' separated list of fields describing how output is formatted [possible values: ident, jptr, type, value, jmes]")
         )
         .subcommand(
             SubCommand::with_name("config")
