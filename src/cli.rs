@@ -7,7 +7,7 @@ use {
     clap::{crate_authors, crate_version, App, Arg, ArgMatches as Matches, SubCommand},
     regex::Regex,
     simplelog::LevelFilter,
-    std::collections::HashSet,
+    std::collections::{HashMap, HashSet},
 };
 
 // Subset of all Field variants that can be used for valuable output
@@ -18,6 +18,73 @@ const VALID_FIELDS: [Field; 5] = [
     Field::Value,
     Field::JmesPath,
 ];
+
+const FIELDS: [Field; 7] = [
+    Field::Delimiter,
+    Field::Guard,
+    Field::Identifier,
+    Field::JmesPath,
+    Field::Pointer,
+    Field::Type,
+    Field::Value,
+];
+
+struct DependencyTree {
+    /// Field and its dependencies, if any
+    map: HashMap<Field, Option<Vec<Field>>>,
+}
+
+impl DependencyTree {
+    /// Initialize the base relations between Fields
+    fn init() -> Self {
+        let mut map = HashMap::with_capacity(FIELDS.len());
+        FIELDS
+            .iter()
+            .map(|field| match field {
+                f @ Field::Delimiter => (f, None),
+                f @ Field::Guard => (f, None),
+                f @ Field::Identifier => (f, Some(vec![Field::Guard, Field::Delimiter])),
+                f @ Field::JmesPath => (f, Some(vec![Field::Pointer])),
+                f @ Field::Pointer => (f, Some(vec![Field::Value])),
+                f @ Field::Type => (f, Some(vec![Field::Value])),
+                f @ Field::Value => (f, Some(vec![Field::Guard, Field::Delimiter])),
+            })
+            .for_each(|(field, dependencies)| {
+                map.insert(*field, dependencies);
+            });
+        DependencyTree { map }
+    }
+
+    /// Generate a dependency map, used for determining what work this instance of the program needs to do
+    fn generate_list<F: AsRef<[Field]>>(&self, relevant: F) -> HashMap<Field, bool> {
+        let mut set = HashMap::<Field, bool>::with_capacity(FIELDS.len());
+        // Populate the dependency map with with all secondary Fields
+        relevant
+            .as_ref()
+            .iter()
+            .scan(Vec::<(Field, bool)>::new(), |buffer, field| {
+                match self.map.get(field).unwrap() {
+                    Some(deps) => buffer.extend(deps.iter().map(|f| (*f, false))),
+                    None => {}
+                }
+
+                buffer.pop()
+            })
+            .for_each(|(field, is_output)| {
+                set.insert(field, is_output);
+            });
+        // Populate the dependency map with the primary Fields, overwriting dependencies
+        relevant
+            .as_ref()
+            .iter()
+            .map(|field| (*field, true))
+            .for_each(|(field, is_output)| {
+                set.insert(field, is_output);
+            });
+
+        set
+    }
+}
 
 pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
     App::new("jaesve")
@@ -97,7 +164,7 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
             .value_name("STRING")
             .requires("regex")
             .default_value_if("regex", None, Field::Pointer.into())
-            .possible_values(VALID_FIELDS.iter().map(|f| f.clone().into()).collect::<Vec<&str>>().as_slice())
+            .possible_values(VALID_FIELDS.iter().map(|f| <Field as Into<&str>>::into(*f)).collect::<Vec<&str>>().as_slice())
             .help("Sets column to match regex on")
         )
         .arg(
