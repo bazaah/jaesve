@@ -1,7 +1,10 @@
 use {
-    crate::models::{
-        assets::{Delimiter, Field, Guard, JType, JmesPath, RegexOptions},
-        error::ErrorKind,
+    crate::{
+        cli::ProgramArgs,
+        models::{
+            assets::{AsField, Delimiter, Field, Guard, JType, JmesPath, RegexOptions},
+            error::ErrorKind,
+        },
     },
     fnv::FnvHashMap,
 };
@@ -56,6 +59,48 @@ impl std::fmt::Display for BlockKind {
             BlockKind::Value(v) => write!(f, "{}", v.as_ref().unwrap_or(&String::default())),
             BlockKind::Jmes(j) => write!(f, "{}", j),
         }
+    }
+}
+
+impl Into<BlockKind> for usize {
+    fn into(self) -> BlockKind {
+        BlockKind::Ident(self)
+    }
+}
+
+impl Into<BlockKind> for Delimiter {
+    fn into(self) -> BlockKind {
+        BlockKind::Delimiter(self)
+    }
+}
+
+impl Into<BlockKind> for Guard {
+    fn into(self) -> BlockKind {
+        BlockKind::Guard(self)
+    }
+}
+
+impl Into<BlockKind> for JType {
+    fn into(self) -> BlockKind {
+        BlockKind::Type(self)
+    }
+}
+
+impl Into<BlockKind> for String {
+    fn into(self) -> BlockKind {
+        BlockKind::Pointer(self)
+    }
+}
+
+impl Into<BlockKind> for Option<String> {
+    fn into(self) -> BlockKind {
+        BlockKind::Value(self)
+    }
+}
+
+impl Into<BlockKind> for JmesPath {
+    fn into(self) -> BlockKind {
+        BlockKind::Jmes(self)
     }
 }
 
@@ -190,6 +235,38 @@ impl OutputBuilder {
         Self { blocks }
     }
 
+    // TODO: Figure out a good way to do this
+    // pub fn store_multiple<T: AsField>(
+    //     mut self,
+    //     opts: &ProgramArgs,
+    //     var_items: &mut [Option<T>],
+    // ) -> Self {
+    //     for item in var_items {
+    //         self.store(opts, item.take().unwrap())
+    //     }
+    //     self
+    // }
+
+    // Checked storage of output fields
+    pub fn store<T: AsField>(&mut self, opts: &ProgramArgs, item: T) {
+        if opts.should_store(item.as_field()) {
+            self.store_unchecked(item)
+        }
+    }
+
+    // Unchecked storage of output fields, should only be used if item was checked in some other way
+    pub fn store_unchecked<T: AsField>(&mut self, item: T) {
+        match <T as Into<BlockKind>>::into(item) {
+            BlockKind::Ident(i) => self.blocks[0] = Some(BlockKind::Ident(i)),
+            BlockKind::Delimiter(i) => self.blocks[1] = Some(BlockKind::Delimiter(i)),
+            BlockKind::Guard(i) => self.blocks[2] = Some(BlockKind::Guard(i)),
+            BlockKind::Type(i) => self.blocks[3] = Some(BlockKind::Type(i)),
+            BlockKind::Pointer(i) => self.blocks[4] = Some(BlockKind::Pointer(i)),
+            BlockKind::Value(i) => self.blocks[5] = Some(BlockKind::Value(i)),
+            BlockKind::Jmes(i) => self.blocks[6] = Some(BlockKind::Jmes(i)),
+        }
+    }
+
     pub fn done(mut self) -> Output {
         let mut blocks =
             FnvHashMap::with_capacity_and_hasher(self.blocks.len(), Default::default());
@@ -198,7 +275,7 @@ impl OutputBuilder {
                 let block = opt.take().unwrap();
                 // Hardcoded usizes for keys
                 // If you change these YOU MUST UPDATE the
-                // the other OutputBuilder methods AND the get_xx
+                // store_unchecked method AND the get_xx
                 // functions in Output too
                 match block {
                     i @ BlockKind::Ident(_) => {
@@ -227,44 +304,6 @@ impl OutputBuilder {
         }
 
         Output { blocks }
-    }
-
-    pub fn ident(mut self, id: usize) -> Self {
-        self.blocks[0] = Some(BlockKind::Ident(id));
-        self
-    }
-
-    pub fn delim(mut self, delim: Delimiter) -> Self {
-        self.blocks[1] = Some(BlockKind::Delimiter(delim));
-        self
-    }
-
-    pub fn guard(mut self, guard: Guard) -> Self {
-        self.blocks[2] = Some(BlockKind::Guard(guard));
-        self
-    }
-
-    pub fn type_of(mut self, jtype: JType) -> Self {
-        self.blocks[3] = Some(BlockKind::Type(jtype));
-        self
-    }
-
-    pub fn pointer(mut self, jptr: String) -> Self {
-        self.blocks[4] = Some(BlockKind::Pointer(jptr));
-        self
-    }
-
-    pub fn value(mut self, val: Option<String>) -> Self {
-        self.blocks[5] = Some(BlockKind::Value(val));
-        self
-    }
-
-    pub fn jmes_path(mut self, jmes: Result<JmesPath, ErrorKind>) -> Self {
-        match jmes {
-            Ok(jmes) => self.blocks[6] = Some(BlockKind::Jmes(jmes)),
-            Err(_) => warn!("Could not assemble jmespath... skipping"),
-        }
-        self
     }
 
     /// Function is designed to be used with a filter_map
