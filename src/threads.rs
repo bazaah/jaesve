@@ -92,10 +92,14 @@ pub(crate) fn spawn_workers(
                             from_utf8(&packet.2)
                         );
                         let (json, metadata) = JsonPacket::try_from(packet)?.into_inner();
-                        let builder = JsonPointer::new(&json, metadata);
+                        let builder = JsonPointer::new(opts, &json, metadata);
 
                         for item in builder
-                            .map(|output| output.delim(opts.delimiter()).guard(opts.guard()))
+                            .map(|mut output| {
+                                output.store(opts, opts.delimiter());
+                                output.store(opts, opts.guard());
+                                output
+                            })
                             .filter_map(|output| output.check(opts.regex()))
                         {
                             trace!("current in-processing output item is: {:?}", &item);
