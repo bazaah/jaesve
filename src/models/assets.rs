@@ -1,8 +1,11 @@
 use {
-    crate::models::{
-        builder::{BlockKind, OutputBuilder},
-        error::ErrorKind,
-        pointer::{Pointer, PointerKind, PointerParts},
+    crate::{
+        cli::ProgramArgs,
+        models::{
+            builder::{BlockKind, OutputBuilder},
+            error::ErrorKind,
+            pointer::{Pointer, PointerKind, PointerParts},
+        },
     },
     serde_json::{
         from_slice, Value as JsonValue,
@@ -122,6 +125,12 @@ impl std::fmt::Display for JType {
     }
 }
 
+impl Default for JType {
+    fn default() -> Self {
+        Self::Null
+    }
+}
+
 /// Functions as a cheap marker for representing
 /// an abstract BlockKind
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
@@ -216,9 +225,9 @@ impl From<Field> for &str {
     }
 }
 
-impl From<BlockKind> for Field {
-    fn from(kind: BlockKind) -> Self {
-        match kind {
+impl<T: AsRef<BlockKind>> From<T> for Field {
+    fn from(kind: T) -> Self {
+        match kind.as_ref() {
             BlockKind::Ident(_) => Field::Identifier,
             BlockKind::Delimiter(_) => Field::Delimiter,
             BlockKind::Guard(_) => Field::Guard,
@@ -244,9 +253,61 @@ impl std::fmt::Display for Field {
     }
 }
 
+impl AsRef<Field> for Field {
+    fn as_ref(&self) -> &Field {
+        self
+    }
+}
+
 impl Default for Field {
     fn default() -> Self {
         Field::Pointer
+    }
+}
+
+pub trait AsField: Into<BlockKind> {
+    fn as_field(&self) -> Field;
+}
+
+impl AsField for usize {
+    fn as_field(&self) -> Field {
+        Field::Identifier
+    }
+}
+
+impl AsField for Delimiter {
+    fn as_field(&self) -> Field {
+        Field::Delimiter
+    }
+}
+
+impl AsField for Guard {
+    fn as_field(&self) -> Field {
+        Field::Guard
+    }
+}
+
+impl AsField for JType {
+    fn as_field(&self) -> Field {
+        Field::Type
+    }
+}
+
+impl AsField for String {
+    fn as_field(&self) -> Field {
+        Field::Pointer
+    }
+}
+
+impl AsField for Option<String> {
+    fn as_field(&self) -> Field {
+        Field::Value
+    }
+}
+
+impl AsField for JmesPath {
+    fn as_field(&self) -> Field {
+        Field::JmesPath
     }
 }
 
@@ -330,6 +391,12 @@ impl std::fmt::Display for Delimiter {
     }
 }
 
+impl Default for Delimiter {
+    fn default() -> Self {
+        Delimiter::Char(',')
+    }
+}
+
 /// Type 'char' wrapper specialized for
 /// output field guards, allowing for
 /// no guard or 1 guard char
@@ -357,28 +424,48 @@ impl std::fmt::Display for Guard {
     }
 }
 
+impl Default for Guard {
+    fn default() -> Self {
+        Guard::None
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct JmesPath {
     inner: String,
 }
 
 impl JmesPath {
-    pub fn try_from<P: Pointer>(p: &P) -> Result<Self, ErrorKind> {
-        let parts = p.as_parts()?;
-        // Check for unsupported JSON, i.e JSON literals
-        if !(parts.len() == 0) {
-            let mut inner = String::with_capacity(
-                parts
-                    .iter()
-                    .map(|kind| match kind {
-                        PointerParts::Slash => 1,
-                        PointerParts::Array(_) => 3,
-                        PointerParts::Object(s) => 1 + s.len(),
-                    })
-                    .fold(0, |acc, num| acc + num),
-            );
+    pub fn from<P: Pointer>(p: &P) -> Self {
+        match p.as_parts() {
+            Ok(parts) => JmesPath {
+                inner: format!("{}", JmesDisplay::from(parts)),
+            },
+            Err(_) => {
+                warn!("Could not assemble jmespath... skipping");
+                JmesPath {
+                    inner: String::default(),
+                }
+            }
+        }
+    }
+}
 
-            for (first, _, item) in parts
+/// Effectively implements a specialized Display for Pointer
+struct JmesDisplay<'a>(&'a Vec<PointerParts>);
+
+impl<'a> From<&'a Vec<PointerParts>> for JmesDisplay<'a> {
+    fn from(p: &'a Vec<PointerParts>) -> JmesDisplay<'a> {
+        JmesDisplay(p)
+    }
+}
+
+impl<'a> std::fmt::Display for JmesDisplay<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        // Check for unsupported JSON, i.e JSON literals
+        if !(self.0.len() == 0) {
+            for (first, _, item) in self
+                .0
                 .iter()
                 .filter(|part| match part {
                     PointerParts::Slash => false,
@@ -389,24 +476,20 @@ impl JmesPath {
                 match item {
                     PointerParts::Object(s) => {
                         if first {
-                            write!(&mut inner, "{}", s)?;
+                            write!(f, "{}", s)?
                         } else {
-                            write!(&mut inner, ".{}", s)?;
+                            write!(f, ".{}", s)?
                         }
                     }
-                    PointerParts::Array(u) => {
-                        write!(&mut inner, "[{}]", u)?;
-                    }
+                    PointerParts::Array(u) => write!(f, "[{}]", u)?,
                     PointerParts::Slash => {}
                 }
             }
 
-            Ok(JmesPath { inner })
+            Ok(())
         } else {
             // If unsupported, return what appears to be the standard response
-            Ok(JmesPath {
-                inner: String::from("null"),
-            })
+            write!(f, "null")
         }
     }
 }
@@ -423,17 +506,30 @@ impl std::fmt::Display for JmesPath {
     }
 }
 
+impl Default for JmesPath {
+    fn default() -> Self {
+        JmesPath {
+            inner: String::default(),
+        }
+    }
+}
+
 /// Struct responsible for turning each unwound
 /// JSON object into the components that Output / Builder
 /// will use
-pub struct JsonPointer<'j> {
+pub struct JsonPointer<'j, 'args: 'j> {
     ident: usize,
     queue: VecDeque<(&'j JsonValue, PointerKind)>,
     pbuf: Vec<OutputBuilder>,
+    opts: &'args ProgramArgs,
 }
 
-impl<'j> JsonPointer<'j> {
-    pub fn new(json: &'j JsonValue, meta: (usize, PointerKind, Option<usize>)) -> Self {
+impl<'j, 'args> JsonPointer<'j, 'args> {
+    pub fn new(
+        opts: &'args ProgramArgs,
+        json: &'j JsonValue,
+        meta: (usize, PointerKind, Option<usize>),
+    ) -> Self {
         let (mut queue, pbuf) = match meta.2 {
             Some(hint) => (VecDeque::with_capacity(hint), Vec::with_capacity(hint)),
             None => (VecDeque::new(), Vec::new()),
@@ -445,6 +541,7 @@ impl<'j> JsonPointer<'j> {
             ident: meta.0,
             queue,
             pbuf,
+            opts,
         }
     }
 
@@ -456,24 +553,10 @@ impl<'j> JsonPointer<'j> {
                     for (k, v) in map.iter() {
                         let new_path = ptr.clone_extend(k.as_str());
                         if v.is_object() {
-                            self.pbuf.push(
-                                OutputBuilder::new()
-                                    .ident(self.ident)
-                                    .pointer(new_path.as_complete())
-                                    .value(None)
-                                    .type_of(v.into())
-                                    .jmes_path(JmesPath::try_from(&new_path)),
-                            );
+                            self.output_checked(&new_path, None, v.into())
                         }
                         if v.is_array() {
-                            self.pbuf.push(
-                                OutputBuilder::new()
-                                    .ident(self.ident)
-                                    .pointer(new_path.as_complete())
-                                    .value(None)
-                                    .type_of(v.into())
-                                    .jmes_path(JmesPath::try_from(&new_path)),
-                            );
+                            self.output_checked(&new_path, None, v.into())
                         }
                         self.queue.push_back((v, new_path));
                     }
@@ -485,47 +568,31 @@ impl<'j> JsonPointer<'j> {
                     }
                 }
                 Some((jString(val), ref ptr)) => {
-                    self.pbuf.push(
-                        OutputBuilder::new()
-                            .ident(self.ident)
-                            .pointer(ptr.as_complete())
-                            .value(Some(val.to_string()))
-                            .type_of(value.as_ref().unwrap().0.into())
-                            .jmes_path(JmesPath::try_from(ptr)),
+                    self.output_checked(
+                        &ptr,
+                        Some(val.to_string()),
+                        value.as_ref().unwrap().0.into(),
                     );
                     break;
                 }
                 Some((jNumber(val), ref ptr)) => {
-                    self.pbuf.push(
-                        OutputBuilder::new()
-                            .ident(self.ident)
-                            .pointer(ptr.as_complete())
-                            .value(Some(val.to_string()))
-                            .type_of(value.as_ref().unwrap().0.into())
-                            .jmes_path(JmesPath::try_from(ptr)),
+                    self.output_checked(
+                        &ptr,
+                        Some(val.to_string()),
+                        value.as_ref().unwrap().0.into(),
                     );
                     break;
                 }
                 Some((jBool(val), ref ptr)) => {
-                    self.pbuf.push(
-                        OutputBuilder::new()
-                            .ident(self.ident)
-                            .pointer(ptr.as_complete())
-                            .value(Some(val.to_string()))
-                            .type_of(value.as_ref().unwrap().0.into())
-                            .jmes_path(JmesPath::try_from(ptr)),
+                    self.output_checked(
+                        &ptr,
+                        Some(val.to_string()),
+                        value.as_ref().unwrap().0.into(),
                     );
                     break;
                 }
                 Some((tp @ jNull, ptr)) => {
-                    self.pbuf.push(
-                        OutputBuilder::new()
-                            .ident(self.ident)
-                            .pointer(ptr.as_complete())
-                            .value(Some(String::from("null")))
-                            .type_of(tp.into())
-                            .jmes_path(JmesPath::try_from(&ptr)),
-                    );
+                    self.output_checked(&ptr, Some(String::from("null")), tp.into());
                     break;
                 }
                 None => break,
@@ -533,9 +600,31 @@ impl<'j> JsonPointer<'j> {
         }
         self.pbuf.pop()
     }
+
+    /// Custom output storage checker due to the difficulties induced by PointerKind
+    fn output_checked(&mut self, ptr: &PointerKind, val: Option<String>, jtype: JType) {
+        let s = &*self;
+        let mut builder = OutputBuilder::new();
+        if s.opts.should_store(Field::Identifier) {
+            builder.store_unchecked(s.ident)
+        }
+        if s.opts.should_store(Field::Pointer) {
+            builder.store_unchecked(ptr.as_complete())
+        }
+        if s.opts.should_store(Field::Value) {
+            builder.store_unchecked(val)
+        }
+        if s.opts.should_store(Field::Type) {
+            builder.store_unchecked(jtype)
+        }
+        if s.opts.should_store(Field::JmesPath) {
+            builder.store_unchecked(JmesPath::from(ptr))
+        }
+        self.pbuf.push(builder);
+    }
 }
 
-impl<'j> Iterator for JsonPointer<'j> {
+impl<'j, 'args> Iterator for JsonPointer<'j, 'args> {
     type Item = OutputBuilder;
 
     fn next(&mut self) -> Option<Self::Item> {
