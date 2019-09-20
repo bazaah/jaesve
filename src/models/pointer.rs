@@ -25,7 +25,7 @@ pub enum PointerKind {
 
 impl PointerKind {
     pub fn new(opts: &ProgramArgs) -> Self {
-        match opts.relevant_fields().contains(&Field::JmesPath) {
+        match opts.should_calculate(Field::JmesPath) {
             true => PointerKind::Complex(Complex::new()),
             false => PointerKind::Simple(String::new()),
         }
