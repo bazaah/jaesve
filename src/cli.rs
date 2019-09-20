@@ -19,73 +19,6 @@ const VALID_FIELDS: [Field; 5] = [
     Field::JmesPath,
 ];
 
-const FIELDS: [Field; 7] = [
-    Field::Delimiter,
-    Field::Guard,
-    Field::Identifier,
-    Field::JmesPath,
-    Field::Pointer,
-    Field::Type,
-    Field::Value,
-];
-
-struct DependencyTree {
-    /// Field and its dependencies, if any
-    map: HashMap<Field, Option<Vec<Field>>>,
-}
-
-impl DependencyTree {
-    /// Initialize the base relations between Fields
-    fn init() -> Self {
-        let mut map = HashMap::with_capacity(FIELDS.len());
-        FIELDS
-            .iter()
-            .map(|field| match field {
-                f @ Field::Delimiter => (f, None),
-                f @ Field::Guard => (f, None),
-                f @ Field::Identifier => (f, Some(vec![Field::Guard, Field::Delimiter])),
-                f @ Field::JmesPath => (f, Some(vec![Field::Pointer])),
-                f @ Field::Pointer => (f, Some(vec![Field::Value])),
-                f @ Field::Type => (f, Some(vec![Field::Value])),
-                f @ Field::Value => (f, Some(vec![Field::Guard, Field::Delimiter])),
-            })
-            .for_each(|(field, dependencies)| {
-                map.insert(*field, dependencies);
-            });
-        DependencyTree { map }
-    }
-
-    /// Generate a dependency map, used for determining what work this instance of the program needs to do
-    fn generate_list<F: AsRef<[Field]>>(&self, relevant: F) -> HashMap<Field, bool> {
-        let mut set = HashMap::<Field, bool>::with_capacity(FIELDS.len());
-        // Populate the dependency map with with all secondary Fields
-        relevant
-            .as_ref()
-            .iter()
-            .scan(Vec::<(Field, bool)>::new(), |buffer, field| {
-                match self.map.get(field).unwrap() {
-                    Some(deps) => buffer.extend(deps.iter().map(|f| (*f, false))),
-                    None => {}
-                }
-
-                buffer.pop()
-            })
-            .for_each(|(field, is_output)| {
-                set.insert(field, is_output);
-            });
-        // Populate the dependency map with the primary Fields, overwriting dependencies
-        relevant
-            .as_ref()
-            .iter()
-            .map(|field| (*field, true))
-            .for_each(|(field, is_output)| {
-                set.insert(field, is_output);
-            });
-
-        set
-    }
-}
-
 pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
     App::new("jaesve")
         .about("Utility for converting JSON into a CSV-like format")
@@ -297,6 +230,7 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
         )
 }
 
+#[derive(Debug)]
 pub struct ProgramArgs {
     delimiter: Delimiter,
     guard: Guard,
@@ -306,6 +240,7 @@ pub struct ProgramArgs {
     format: Vec<Field>,
     reader: Vec<Option<ReadFrom>>,
     writer: (Option<String>, bool),
+    dependency_map: HashMap<Field, bool>,
     subcommand_config: SubConfig,
 }
 
@@ -375,6 +310,35 @@ impl<'a, 'b> ProgramArgs {
             None => unreachable!("Default value should be supplied by clap"),
         };
 
+        let dependency_map = DependencyTree::init().generate_list(match format.len() {
+            0 => unreachable!("Clap should validate output fields >= 1"),
+            1 => format
+                .iter()
+                .chain(
+                    [
+                        Some(Field::Guard),
+                        regex.as_ref().map(|regex| regex.on_field()),
+                    ]
+                    .iter()
+                    .filter_map(|i| i.as_ref()),
+                )
+                .copied()
+                .collect::<Vec<Field>>(),
+            _ => format
+                .iter()
+                .chain(
+                    [
+                        Some(Field::Guard),
+                        Some(Field::Delimiter),
+                        regex.as_ref().map(|regex| regex.on_field()),
+                    ]
+                    .iter()
+                    .filter_map(|i| i.as_ref()),
+                )
+                .copied()
+                .collect::<Vec<Field>>(),
+        });
+
         let subcommand_config = SubConfig::from_matches(store.subcommand_matches("config"));
 
         Self {
@@ -386,6 +350,7 @@ impl<'a, 'b> ProgramArgs {
             format,
             reader,
             writer,
+            dependency_map,
             subcommand_config,
         }
     }
@@ -422,6 +387,17 @@ impl<'a, 'b> ProgramArgs {
         self.regex.as_ref()
     }
 
+    pub fn should_calculate<F: AsRef<Field>>(&self, field: F) -> bool {
+        self.dependency_map.contains_key(field.as_ref())
+    }
+
+    pub fn should_store<F: AsRef<Field>>(&self, field: F) -> bool {
+        self.dependency_map
+            .get(field.as_ref())
+            .map_or(false, |b| *b)
+    }
+
+    /* <=== SubCommands ===> */
     pub fn logger(&self) -> Option<&HashSet<String>> {
         self.subcommand_config.logger.as_ref()
     }
@@ -441,21 +417,9 @@ impl<'a, 'b> ProgramArgs {
     pub fn linereader_eol(&self) -> u8 {
         self.subcommand_config.linereader_eol
     }
-
-    pub fn relevant_fields(&self) -> HashSet<Field> {
-        self.format()
-            .iter()
-            .map(|f| -> Option<Field> { Some(*f) })
-            .chain(
-                [self.regex().map(|regex| regex.on_field())]
-                    .iter()
-                    .map(|f| *f),
-            )
-            .filter_map(|o: Option<Field>| o.map(|f| f))
-            .collect()
-    }
 }
 
+#[derive(Debug)]
 struct SubConfig {
     logger: Option<HashSet<String>>,
     max_handles: usize,
@@ -531,6 +495,80 @@ impl Default for SubConfig {
             input_buffer_size: 64 * 1024,
             linereader_eol: b'\n',
         }
+    }
+}
+
+const FIELDS: [Field; 7] = [
+    Field::Delimiter,
+    Field::Guard,
+    Field::Identifier,
+    Field::JmesPath,
+    Field::Pointer,
+    Field::Type,
+    Field::Value,
+];
+
+/// There are two variants of dependency that need to be mapped:
+/// 1. Needs to be calculated
+/// 2. Needs to be stored (which implies 1)
+///
+/// In the absence of a better idea, I currently store them as HashMap<Field, bool>
+/// Thus if a field exists in the map it is at least 1, if its value is true it is also 2
+struct DependencyTree {
+    /// Field and its dependencies, if any
+    map: HashMap<Field, Option<Vec<Field>>>,
+}
+
+impl DependencyTree {
+    /// Initialize the base relations between Fields
+    fn init() -> Self {
+        let mut map = HashMap::with_capacity(FIELDS.len());
+        FIELDS
+            .iter()
+            .map(|field| match field {
+                f @ Field::Delimiter => (f, None),
+                f @ Field::Guard => (f, None),
+                f @ Field::Identifier => (f, Some(vec![Field::Guard, Field::Delimiter])),
+                f @ Field::JmesPath => (f, Some(vec![Field::Pointer])),
+                f @ Field::Pointer => (f, Some(vec![Field::Value])),
+                f @ Field::Type => (f, Some(vec![Field::Value])),
+                f @ Field::Value => (f, Some(vec![Field::Guard, Field::Delimiter])),
+            })
+            .for_each(|(field, dependencies)| {
+                map.insert(*field, dependencies);
+            });
+        DependencyTree { map }
+    }
+    /// Generate a dependency map, used for determining what work this instance of the program needs to do
+    fn generate_list<F: AsRef<[Field]>>(&self, relevant: F) -> HashMap<Field, bool> {
+        let mut set = HashMap::<Field, bool>::with_capacity(FIELDS.len());
+        // Populate the dependency map with with all secondary Fields
+        relevant
+            .as_ref()
+            .iter()
+            .scan(Vec::<(Field, bool)>::new(), |buffer, field| {
+                match self.map.get(field).unwrap() {
+                    Some(deps) => buffer.extend(deps.iter().map(|f| (*f, false))),
+                    None => {}
+                }
+
+                buffer.pop()
+            })
+            .for_each(|(field, is_output)| {
+                if !set.contains_key(&field) {
+                    set.insert(field, is_output);
+                }
+            });
+        // Populate the dependency map with the primary Fields, overwriting secondary values
+        relevant
+            .as_ref()
+            .iter()
+            .map(|field| (*field, true))
+            .for_each(|(field, is_output)| {
+                set.insert(field, is_output);
+            });
+
+        set
     }
 }
 
