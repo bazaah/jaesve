@@ -228,6 +228,28 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
                         .help("Set stdin linereader's EOL character, ignored if '--lines' is not set")
                 )
         )
+        .subcommand(
+            SubCommand::with_name("completions")
+                .about("Autocompletion script generator")
+                .version("0.1.0")
+                .after_help("Note that running this subcommand overrides normal program behavior: all other args, flags, options and subcommands will be ignored. It generates the autocompletion script and exits, nothing more")
+                .arg(
+                    Arg::with_name("completions_file")
+                    .requires("shell")
+                    .value_name("FILE")
+                    .takes_value(true)
+                    .help("Output file for completions, defaulting to stdout")
+                    .long_help("Output file for completions, note that this command will overwrite, not append")
+                )
+                .arg(
+                    Arg::with_name("shell")
+                        .required(true)
+                        .possible_values(&["bash", "zsh", "fish"])
+                        .last(true)
+                        .value_name("SHELL")
+                        .help("Shell to generate completion script for")
+                )
+        )
 }
 
 pub struct ProgramArgs {
@@ -245,6 +267,8 @@ pub struct ProgramArgs {
 impl<'a, 'b> ProgramArgs {
     pub fn init(cli: App<'a, 'b>) -> Self {
         let store = cli.get_matches();
+
+        ProgramArgs::if_completions_exit(store.subcommand_matches("completions"));
         let debug_level = match (store.occurrences_of("verbosity"), store.is_present("quiet")) {
             (_, true) => LevelFilter::Off,
             (0, false) => LevelFilter::Warn,
@@ -353,6 +377,48 @@ impl<'a, 'b> ProgramArgs {
 
     pub fn regex(&self) -> Option<&RegexOptions> {
         self.regex.as_ref()
+    }
+
+    /// Checks if the 'completion' subcommand is active
+    /// if it is, generate completion script and exit
+    fn if_completions_exit(subcommand: Option<&Matches<'a>>) {
+        use std::{fs::File, io::stdout as cout, io::Write as ioWrite};
+        let writer = |path: Option<&str>| -> (Box<dyn ioWrite>, i32) {
+            match path {
+                Some(path) => match File::create(path) {
+                    Ok(file) => (Box::from(file), 0),
+                    // Return exit status 1 to indicate an error
+                    Err(_) => (Box::from(cout()), 1),
+                },
+                None => (Box::from(cout()), 0),
+            }
+        };
+
+        match subcommand {
+            Some(sub_store) => sub_store
+                .value_of("completions_file")
+                .and_then(|path| {
+                    let mut writer = writer(Some(path));
+                    generate_cli().gen_completions_to(
+                        "jaesve",
+                        sub_store.value_of("shell").unwrap().parse().unwrap(),
+                        &mut writer.0,
+                    );
+                    Some(writer.1)
+                })
+                .or_else(|| {
+                    let mut writer = writer(None);
+                    generate_cli().gen_completions_to(
+                        "jaesve",
+                        sub_store.value_of("shell").unwrap().parse().unwrap(),
+                        &mut writer.0,
+                    );
+                    Some(writer.1)
+                })
+                .map(|code| std::process::exit(code))
+                .unwrap(),
+            None => {}
+        };
     }
 
     pub fn logger(&self) -> Option<&HashSet<String>> {
