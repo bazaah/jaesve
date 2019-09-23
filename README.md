@@ -47,6 +47,10 @@ Jaesve comes with a CLI, courtesy of [clap.rs](https://github.com/clap-rs/clap).
 - `config` Configure various program intrinsics
   - These parameters are **unstable** and may change in the future
   - `config --help` for the current list
+- `completions` Autocompletion script generator
+  - `completions [FILE] -- <SHELL>`
+    - If no `FILE` is present, defaults to stdout
+    - Possible `SHELL`s: `bash, zsh, fish`
 
 #### Args
 
