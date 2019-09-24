@@ -9,6 +9,7 @@ use {
             pointer::{Pointer, PointerKind},
             scan::JsonScan,
         },
+        CLI,
     },
     simplelog::*,
     std::{
@@ -27,7 +28,7 @@ pub mod pointer;
 pub mod scan;
 
 /// Type def for the reader -> builder channel
-pub type ToBuilder = (usize, PointerKind, Vec<u8>);
+pub type ToBuilder = (Option<usize>, PointerKind, Vec<u8>);
 /// Type def for the builder -> writer channel
 pub type ToWriter = Output;
 
@@ -152,7 +153,7 @@ pub fn initialize_logging(opts: &ProgramArgs) {
 /// handles both recursive and single item docs
 pub fn unwind_json<I>(
     opts: &ProgramArgs,
-    ident: usize,
+    ident: Option<usize>,
     src: I,
     channel: SyncSender<ToBuilder>,
 ) -> Result<()>
@@ -211,7 +212,7 @@ where
 // how badly this function mangled it
 pub fn unwind_recursive<I>(
     opts: &ProgramArgs,
-    ident: usize,
+    ident: Option<usize>,
     scanner: &mut JsonScan<I>,
     jptr: PointerKind,
     channel: SyncSender<ToBuilder>,
@@ -294,7 +295,7 @@ where
 /// Only called if the doc is not a object or array
 pub fn unwind_single<I>(
     opts: &ProgramArgs,
-    ident: usize,
+    ident: Option<usize>,
     scanner: &mut JsonScan<I>,
     prefix_byte: u8,
     channel: SyncSender<ToBuilder>,
@@ -364,9 +365,19 @@ where
 }
 
 /// Helper function for early parse skipping, based on input ident
-pub fn check_index(regex: Option<&RegexOptions>, ident: usize) -> bool {
-    match regex {
-        Some(regex) if regex.is_ident() => regex.pattern().is_match(&ident.to_string()),
+pub fn check_index(regex: Option<&RegexOptions>, ident: Option<usize>) -> bool {
+    ident.map_or(true, |i| match regex {
+        Some(regex) if regex.is_ident() => regex.pattern().is_match(&i.to_string()),
         _ => true,
-    }
+    })
+}
+
+/// Helper function for abstracting the dependency check out of
+/// the individual business logic
+pub fn eval<T, C, F, A>(check: &C, f: F, arg: A) -> T
+where
+    F: Fn(bool, A) -> T,
+    C: AsRef<Field>,
+{
+    f(CLI.should_calculate(check.as_ref()), arg)
 }

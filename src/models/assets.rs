@@ -517,18 +517,18 @@ impl Default for JmesPath {
 /// Struct responsible for turning each unwound
 /// JSON object into the components that Output / Builder
 /// will use
-pub struct JsonPointer<'j, 'args: 'j> {
-    ident: usize,
+pub struct BlockGenerator<'j, 'args: 'j> {
+    ident: Option<usize>,
     queue: VecDeque<(&'j JsonValue, PointerKind)>,
     pbuf: Vec<OutputBuilder>,
     opts: &'args ProgramArgs,
 }
 
-impl<'j, 'args> JsonPointer<'j, 'args> {
+impl<'j, 'args> BlockGenerator<'j, 'args> {
     pub fn new(
         opts: &'args ProgramArgs,
         json: &'j JsonValue,
-        meta: (usize, PointerKind, Option<usize>),
+        meta: (Option<usize>, PointerKind, Option<usize>),
     ) -> Self {
         let (mut queue, pbuf) = match meta.2 {
             Some(hint) => (VecDeque::with_capacity(hint), Vec::with_capacity(hint)),
@@ -537,7 +537,7 @@ impl<'j, 'args> JsonPointer<'j, 'args> {
 
         queue.push_back((json, meta.1));
 
-        Self {
+        BlockGenerator {
             ident: meta.0,
             queue,
             pbuf,
@@ -606,7 +606,7 @@ impl<'j, 'args> JsonPointer<'j, 'args> {
         let s = &*self;
         let mut builder = OutputBuilder::new();
         if s.opts.should_store(Field::Identifier) {
-            builder.store_unchecked(s.ident)
+            builder.store_unchecked(s.ident.unwrap())
         }
         if s.opts.should_store(Field::Pointer) {
             builder.store_unchecked(ptr.as_complete())
@@ -624,7 +624,7 @@ impl<'j, 'args> JsonPointer<'j, 'args> {
     }
 }
 
-impl<'j, 'args> Iterator for JsonPointer<'j, 'args> {
+impl<'j, 'args> Iterator for BlockGenerator<'j, 'args> {
     type Item = OutputBuilder;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -636,7 +636,7 @@ impl<'j, 'args> Iterator for JsonPointer<'j, 'args> {
 /// turning the raw parts that the scanner / unwinding
 /// sends to JsonPointer
 pub struct JsonPacket {
-    ident: usize,
+    ident: Option<usize>,
     base_path: PointerKind,
     json: JsonValue,
 }
@@ -653,16 +653,18 @@ impl JsonPacket {
         }
     }
 
-    pub fn into_inner(self) -> (JsonValue, (usize, PointerKind, Option<usize>)) {
+    pub fn into_inner(self) -> (JsonValue, (Option<usize>, PointerKind, Option<usize>)) {
         let hint = self.size_hint();
         (self.json, (self.ident, self.base_path, hint))
     }
 }
 
-impl TryFrom<(usize, PointerKind, Vec<u8>)> for JsonPacket {
+impl TryFrom<(Option<usize>, PointerKind, Vec<u8>)> for JsonPacket {
     type Error = ErrorKind;
 
-    fn try_from(packet: (usize, PointerKind, Vec<u8>)) -> std::result::Result<Self, Self::Error> {
+    fn try_from(
+        packet: (Option<usize>, PointerKind, Vec<u8>),
+    ) -> std::result::Result<Self, Self::Error> {
         trace!(
             "trying to convert: {:?} {:?}",
             &packet.1,
@@ -708,5 +710,39 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let first = std::mem::replace(&mut self.0, false);
         self.1.next().map(|e| (first, self.1.peek().is_none(), e))
+    }
+}
+
+pub trait OrDisplay {
+    type Item: std::fmt::Display;
+    fn or_display<'a, 'b>(&'a self, fallback: &'b str) -> FmtNone<'a, 'b, Self::Item>;
+}
+
+impl<T: std::fmt::Display> OrDisplay for Option<T> {
+    type Item = T;
+    fn or_display<'a, 'b>(&'a self, fallback: &'b str) -> FmtNone<'a, 'b, T> {
+        self.as_ref().map_or(FmtNone::from(None, fallback), |val| {
+            FmtNone::from(Some(val), "")
+        })
+    }
+}
+
+pub struct FmtNone<'a, 'b, T: std::fmt::Display> {
+    inner: Option<&'a T>,
+    or_else: &'b str,
+}
+
+impl<'a, 'b, T: std::fmt::Display> FmtNone<'a, 'b, T> {
+    fn from(inner: Option<&'a T>, or_else: &'b str) -> Self {
+        FmtNone { inner, or_else }
+    }
+}
+
+impl<'a, 'b, T: std::fmt::Display> std::fmt::Display for FmtNone<'a, 'b, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self.inner {
+            Some(val) => write!(f, "{}", val),
+            None => write!(f, "{}", self.or_else),
+        }
     }
 }
