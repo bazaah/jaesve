@@ -36,7 +36,7 @@ Jaesve comes with a CLI, courtesy of [clap.rs](https://github.com/clap-rs/clap).
   - Possible: `ident, jptr, type, value, jmes`
 - `-f` `--format` A dot '.' separated list of fields describing how output is formatted
   - Default: `ident.jptr.type.value`
-  - Possible: `ident, jptr, type, value, jmes`
+  - Possible: `ident, jptr, type, value, jmes, all`
 - `-d` `--delim` Sets delimiter between output fields
   - Default: `,`
 - `-g` `--guard` Set field quote character

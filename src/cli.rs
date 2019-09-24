@@ -2,6 +2,7 @@
 use {
     crate::models::{
         assets::{Delimiter, Field, Guard, ReadFrom, RegexOptions},
+        error::ErrorKind,
         get_reader,
     },
     clap::{crate_authors, crate_version, App, Arg, ArgMatches as Matches, SubCommand},
@@ -127,10 +128,7 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
                 // TODO: Figure out to pass &str made from Fields
                 .default_value("ident.jptr.type.value")
                 .validator(|fmt| {
-                    let res: Result<Vec<_>, _> = fmt.split('.').map(|sub| Field::try_from_whitelist(
-                            sub,
-                            &VALID_FIELDS
-                        )
+                    let res: Result<Vec<_>, _> = fmt.split('.').map(|sub| try_from_alias(sub)
                     ).collect();
                     match res {
                         Ok(_) => Ok(()),
@@ -307,12 +305,12 @@ impl<'a, 'b> ProgramArgs {
         };
 
         // Unwrap is safe because of default value set + validated by clap
-        let format: Vec<Field> = store
-            .value_of("format")
-            .unwrap()
-            .split('.')
-            .map(Field::from)
-            .collect();
+        let format_str = store.value_of("format").unwrap();
+        let format: Vec<Field> = if format_str.contains("all") {
+            VALID_FIELDS.iter().copied().collect()
+        } else {
+            format_str.split('.').map(Field::from).collect()
+        };
 
         let regex: Option<RegexOptions> =
             match (store.value_of("regex"), store.value_of("regex_column")) {
@@ -635,6 +633,16 @@ impl DependencyTree {
             });
 
         set
+    }
+}
+
+/// Wrapper function to allow me some additional format 'aliases'
+// That this function exists might indicate an abstraction issue
+// TODO: investigate the above
+fn try_from_alias(sub: &str) -> Result<(), ErrorKind> {
+    match sub {
+        "all" => Ok(()),
+        s => Field::try_from_whitelist(s, &VALID_FIELDS).map(|_| ()),
     }
 }
 
