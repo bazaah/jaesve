@@ -2,8 +2,9 @@ use {
     crate::{
         cli::ProgramArgs,
         models::{
-            assets::{AsField, Delimiter, Field, Guard, JType, JmesPath, RegexOptions},
+            assets::{RegexOptions},
             error::ErrorKind,
+            field::{AsField, Delimiter, Field, Guard, JType, JmesPath}
         },
     },
     fnv::FnvHashMap,

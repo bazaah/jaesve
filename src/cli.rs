@@ -1,7 +1,8 @@
 #![allow(deprecated)]
 use {
     crate::models::{
-        assets::{Delimiter, Field, Guard, ReadFrom, RegexOptions},
+        assets::{ReadFrom, RegexOptions},
+        field::{Delimiter, Field, Guard},
         error::ErrorKind,
         get_reader,
     },

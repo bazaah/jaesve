@@ -2,7 +2,7 @@ use {
     crate::{
         cli::ProgramArgs,
         models::{
-            assets::Field,
+            field::Field,
             error::{ErrorKind, Result},
         },
     },

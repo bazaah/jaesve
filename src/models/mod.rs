@@ -3,11 +3,12 @@ use {
         cli::ProgramArgs,
         match_with_log,
         models::{
-            assets::{Field, IdentifyFirstLast, ReadFrom, ReadKind, RegexOptions},
+            assets::{IdentifyFirstLast, ReadFrom, ReadKind, RegexOptions},
             builder::{Builder, Output},
             error::{ErrorKind, Result},
             pointer::{Pointer, PointerKind},
             scan::JsonScan,
+            field::Field
         },
         CLI,
     },
@@ -24,6 +25,7 @@ use {
 pub mod assets;
 pub mod builder;
 pub mod error;
+pub mod field;
 pub mod pointer;
 pub mod scan;
 
