@@ -109,7 +109,13 @@ pub fn initialize_logging(opts: &ProgramArgs) {
     let mut skipped: Vec<String> = Vec::new();
     match opts.logger() {
         Some(set) if set.contains("-") && set.len() == 1 => {
-            TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr).unwrap()
+            TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr)
+                .unwrap_or_else(|_| {
+                    skipped.push(format!(
+                        "No TERM variable found, defaulting to fallback logger"
+                    ));
+                    SimpleLogger::init(opts.debug_level(), Config::default()).unwrap()
+                })
         }
         Some(set) => CombinedLogger::init(
             set.iter()
@@ -119,7 +125,12 @@ pub fn initialize_logging(opts: &ProgramArgs) {
                         .append(true)
                         .create(true)
                         .open(path)
-                        .map_err(|e| skipped.push(format!("'{}' reason: {}", path, e)))
+                        .map_err(|e| {
+                            skipped.push(format!(
+                                "Failed to open '{}' reason: {}... ignoring",
+                                path, e
+                            ))
+                        })
                         .ok()
                         .map(|f| Some(f)),
                 })
@@ -136,15 +147,22 @@ pub fn initialize_logging(opts: &ProgramArgs) {
                 })
                 .collect(),
         )
-        .unwrap(),
-        None => {
-            TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr).unwrap()
-        }
+        .unwrap_or_else(|_| {
+            skipped.push(format!("Failed to start logger(s), using fallback"));
+            SimpleLogger::init(opts.debug_level(), Config::default()).unwrap()
+        }),
+        None => TermLogger::init(opts.debug_level(), Config::default(), TerminalMode::Stderr)
+            .unwrap_or_else(|_| {
+                skipped.push(format!(
+                    "No TERM variable found, defaulting to fallback logger"
+                ));
+                SimpleLogger::init(opts.debug_level(), Config::default()).unwrap()
+            }),
     }
     info!("<---- PROGRAM START ---->");
     if !skipped.is_empty() {
         for failed in skipped {
-            warn!("Failed to open {}... ignoring", failed)
+            warn!("{}", failed)
         }
     }
 }
