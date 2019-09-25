@@ -28,7 +28,7 @@ pub mod pointer;
 pub mod scan;
 
 /// Type def for the reader -> builder channel
-pub type ToBuilder = (Option<usize>, PointerKind, Vec<u8>);
+pub type ToBuilder = (Option<usize>, Option<PointerKind>, Option<Vec<u8>>);
 /// Type def for the builder -> writer channel
 pub type ToWriter = Output;
 
@@ -172,50 +172,49 @@ pub fn initialize_logging(opts: &ProgramArgs) {
 pub fn unwind_json<I>(
     opts: &ProgramArgs,
     ident: Option<usize>,
-    src: I,
+    source: Option<I>,
     channel: SyncSender<ToBuilder>,
 ) -> Result<()>
 where
     I: Iterator<Item = ioResult<u8>>,
 {
     debug!("Started parsing a JSON doc");
-    let mut scanner = JsonScan::new(src);
+    let pointer = eval_raw(|opts, _| PointerKind::new(opts), ());
+    let mut maybe_scanner = source.map(|src| JsonScan::new(src));
+    match maybe_scanner.as_mut() {
+        Some(scanner) => loop {
+            match scanner.next() {
+                Some(Ok(b @ b'[')) => {
+                    unwind_recursive(opts, ident, scanner, pointer.clone(), channel.clone(), b)?;
+                    continue;
+                }
+                Some(Ok(b @ b'{')) => {
+                    unwind_recursive(opts, ident, scanner, pointer.clone(), channel.clone(), b)?;
+                    continue;
+                }
+                Some(Ok(b @ b'-')) | Some(Ok(b @ b'0'..=b'9')) => {
+                    unwind_single(opts, ident, scanner, b, channel.clone())?
+                }
+                Some(Ok(b @ b't')) | Some(Ok(b @ b'f')) => {
+                    unwind_single(opts, ident, scanner, b, channel.clone())?
+                }
+                Some(Ok(b @ b'n')) => unwind_single(opts, ident, scanner, b, channel.clone())?,
+                Some(Ok(b @ b'"')) => unwind_single(opts, ident, scanner, b, channel.clone())?,
+                Some(Ok(_)) => continue,
+                Some(Err(e)) => return Err(e.into()),
+                None => break,
+            }
+        },
+        None => {
+            channel
+                .send((ident, PointerKind::new(opts), None))
+                .map_err(|_| {
+                    ErrorKind::UnexpectedChannelClose(format!(
+                        "builder in |reader -> builder| channel has hung up"
+                    ))
+                })?;
 
-    loop {
-        match scanner.next() {
-            Some(Ok(b @ b'[')) => {
-                unwind_recursive(
-                    opts,
-                    ident,
-                    &mut scanner,
-                    PointerKind::new(opts),
-                    channel.clone(),
-                    b,
-                )?;
-                continue;
-            }
-            Some(Ok(b @ b'{')) => {
-                unwind_recursive(
-                    opts,
-                    ident,
-                    &mut scanner,
-                    PointerKind::new(opts),
-                    channel.clone(),
-                    b,
-                )?;
-                continue;
-            }
-            Some(Ok(b @ b'-')) | Some(Ok(b @ b'0'..=b'9')) => {
-                unwind_single(opts, ident, &mut scanner, b, channel.clone())?
-            }
-            Some(Ok(b @ b't')) | Some(Ok(b @ b'f')) => {
-                unwind_single(opts, ident, &mut scanner, b, channel.clone())?
-            }
-            Some(Ok(b @ b'n')) => unwind_single(opts, ident, &mut scanner, b, channel.clone())?,
-            Some(Ok(b @ b'"')) => unwind_single(opts, ident, &mut scanner, b, channel.clone())?,
-            Some(Ok(_)) => continue,
-            Some(Err(e)) => return Err(e.into()),
-            None => break,
+            drop(channel);
         }
     }
 
@@ -232,7 +231,7 @@ pub fn unwind_recursive<I>(
     opts: &ProgramArgs,
     ident: Option<usize>,
     scanner: &mut JsonScan<I>,
-    jptr: PointerKind,
+    jptr: Option<PointerKind>,
     channel: SyncSender<ToBuilder>,
     prefix_byte: u8,
 ) -> Result<()>
@@ -251,10 +250,14 @@ where
                     ident,
                     scanner,
                     match prefix_byte {
-                        b'[' => jptr.clone_extend(array_count),
-                        b'{' => jptr.clone_extend(from_utf8(
-                            calculate_key(&buffer, scanner.offsets()).as_slice(),
-                        )?),
+                        b'[' => jptr.as_ref().map(|ptr| ptr.clone_extend(array_count)),
+                        b'{' => jptr
+                            .as_ref()
+                            .map(|ptr| {
+                                from_utf8(&calculate_key(&buffer, scanner.offsets()))
+                                    .map(|s| ptr.clone_extend(s))
+                            })
+                            .transpose()?,
                         _ => unreachable!(),
                     },
                     channel.clone(),
@@ -270,10 +273,14 @@ where
                     ident,
                     scanner,
                     match prefix_byte {
-                        b'[' => jptr.clone_extend(array_count),
-                        b'{' => jptr.clone_extend(from_utf8(
-                            calculate_key(&buffer, scanner.offsets()).as_slice(),
-                        )?),
+                        b'[' => jptr.as_ref().map(|ptr| ptr.clone_extend(array_count)),
+                        b'{' => jptr
+                            .as_ref()
+                            .map(|ptr| {
+                                from_utf8(&calculate_key(&buffer, scanner.offsets()))
+                                    .map(|s| ptr.clone_extend(s))
+                            })
+                            .transpose()?,
                         _ => unreachable!(),
                     },
                     channel.clone(),
@@ -297,9 +304,7 @@ where
         }
     }
 
-    trace!("AFTER: ({:?}, {:?})", &jptr, from_utf8(&buffer));
-
-    channel.send((ident, jptr, buffer)).map_err(|_| {
+    channel.send((ident, jptr, Some(buffer))).map_err(|_| {
         ErrorKind::UnexpectedChannelClose(format!(
             "builder in |reader -> builder| channel has hung up"
         ))
@@ -329,7 +334,7 @@ where
         .collect();
 
     channel
-        .send((ident, PointerKind::new(opts), buffer?))
+        .send((ident, PointerKind::new(opts), Some(buffer?)))
         .map_err(|_| {
             ErrorKind::UnexpectedChannelClose(format!(
                 "builder in |reader -> builder| channel has hung up"
@@ -398,4 +403,11 @@ where
     C: AsRef<Field>,
 {
     f(CLI.should_calculate(check.as_ref()), arg)
+}
+
+pub fn eval_raw<T, F, A>(f: F, arg: A) -> T
+where
+    F: Fn(&ProgramArgs, A) -> T,
+{
+    f(&CLI, arg)
 }

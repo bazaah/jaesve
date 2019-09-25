@@ -518,109 +518,104 @@ impl Default for JmesPath {
 /// JSON object into the components that Output / Builder
 /// will use
 pub struct BlockGenerator<'j, 'args: 'j> {
-    ident: Option<usize>,
-    queue: VecDeque<(&'j JsonValue, PointerKind)>,
-    pbuf: Vec<OutputBuilder>,
+    queue: VecDeque<(Option<&'j JsonValue>, Option<PointerKind>)>,
+    buffer: Vec<OutputBuilder>,
     opts: &'args ProgramArgs,
+    pristine: bool,
 }
 
 impl<'j, 'args> BlockGenerator<'j, 'args> {
     pub fn new(
         opts: &'args ProgramArgs,
-        json: &'j JsonValue,
-        meta: (Option<usize>, PointerKind, Option<usize>),
+        json: Option<&'j JsonValue>,
+        meta: (Option<PointerKind>, Option<usize>),
     ) -> Self {
-        let (mut queue, pbuf) = match meta.2 {
-            Some(hint) => (VecDeque::with_capacity(hint), Vec::with_capacity(hint)),
-            None => (VecDeque::new(), Vec::new()),
+        let (mut queue, buffer) = match (json, meta.1) {
+            (_, Some(hint)) => (VecDeque::with_capacity(hint), Vec::with_capacity(hint)),
+            (_, None) => (VecDeque::new(), Vec::new()),
         };
-
-        queue.push_back((json, meta.1));
+        queue.push_back((json, meta.0));
 
         BlockGenerator {
-            ident: meta.0,
             queue,
-            pbuf,
+            buffer,
             opts,
+            pristine: true,
         }
     }
 
     pub fn parse_next(&mut self) -> Option<OutputBuilder> {
         loop {
-            let value = self.queue.pop_front();
-            match value {
-                Some((jObject(map), ref ptr)) => {
-                    for (k, v) in map.iter() {
-                        let new_path = ptr.clone_extend(k.as_str());
-                        if v.is_object() {
-                            self.output_checked(&new_path, None, v.into())
+            let maybe_value = self.queue.pop_front();
+            match maybe_value {
+                Some(value) => match value {
+                    (Some(jObject(map)), ref ptr) => {
+                        for (k, v) in map.iter() {
+                            let new_path = ptr.as_ref().map(|p| p.clone_extend(k.as_str()));
+                            if v.is_object() {
+                                self.output_checked(&new_path, None, v.into());
+                            }
+                            if v.is_array() {
+                                self.output_checked(&new_path, None, v.into());
+                            }
+                            self.queue.push_back((Some(v), new_path));
                         }
-                        if v.is_array() {
-                            self.output_checked(&new_path, None, v.into())
+                    }
+                    (Some(jArray(a)), ref ptr) => {
+                        for (i, v) in a.iter().map(|v| Some(v)).enumerate() {
+                            let new_path = ptr.as_ref().map(|p| p.clone_extend(i));
+                            self.queue.push_back((v, new_path));
                         }
-                        self.queue.push_back((v, new_path));
                     }
-                }
-                Some((jArray(a), ref ptr)) => {
-                    for (i, v) in a.iter().enumerate() {
-                        let new_path = ptr.clone_extend(i);
-                        self.queue.push_back((v, new_path));
+                    (Some(jString(val)), ref ptr) => {
+                        self.output_checked(&ptr, Some(val.to_string()), value.0.unwrap().into());
+                        break;
                     }
-                }
-                Some((jString(val), ref ptr)) => {
-                    self.output_checked(
-                        &ptr,
-                        Some(val.to_string()),
-                        value.as_ref().unwrap().0.into(),
-                    );
-                    break;
-                }
-                Some((jNumber(val), ref ptr)) => {
-                    self.output_checked(
-                        &ptr,
-                        Some(val.to_string()),
-                        value.as_ref().unwrap().0.into(),
-                    );
-                    break;
-                }
-                Some((jBool(val), ref ptr)) => {
-                    self.output_checked(
-                        &ptr,
-                        Some(val.to_string()),
-                        value.as_ref().unwrap().0.into(),
-                    );
-                    break;
-                }
-                Some((tp @ jNull, ptr)) => {
-                    self.output_checked(&ptr, Some(String::from("null")), tp.into());
-                    break;
-                }
+                    (Some(jNumber(val)), ref ptr) => {
+                        self.output_checked(&ptr, Some(val.to_string()), value.0.unwrap().into());
+                        break;
+                    }
+                    (Some(jBool(val)), ref ptr) => {
+                        self.output_checked(&ptr, Some(val.to_string()), value.0.unwrap().into());
+                        break;
+                    }
+                    (Some(tp @ jNull), ptr) => {
+                        self.output_checked(&ptr, Some(String::from("null")), tp.into());
+                        break;
+                    }
+                    (None, _) => {
+                        if self.pristine {
+                            self.pristine = false;
+                            return Some(OutputBuilder::new());
+                        } else {
+                            break;
+                        }
+                    }
+                },
                 None => break,
             }
         }
-        self.pbuf.pop()
+        self.buffer.pop()
     }
 
     /// Custom output storage checker due to the difficulties induced by PointerKind
-    fn output_checked(&mut self, ptr: &PointerKind, val: Option<String>, jtype: JType) {
+    fn output_checked(&mut self, ptr: &Option<PointerKind>, val: Option<String>, jtype: JType) {
         let s = &*self;
         let mut builder = OutputBuilder::new();
-        if s.opts.should_store(Field::Identifier) {
-            builder.store_unchecked(s.ident.unwrap())
-        }
+
         if s.opts.should_store(Field::Pointer) {
-            builder.store_unchecked(ptr.as_complete())
+            builder.store_unchecked(ptr.as_ref().map(|p| p.as_complete()))
         }
         if s.opts.should_store(Field::Value) {
-            builder.store_unchecked(val)
+            builder.store_unchecked(Some(val))
         }
         if s.opts.should_store(Field::Type) {
-            builder.store_unchecked(jtype)
+            builder.store_unchecked(Some(jtype))
         }
         if s.opts.should_store(Field::JmesPath) {
-            builder.store_unchecked(JmesPath::from(ptr))
+            builder.store_unchecked(ptr.as_ref().map(|p| JmesPath::from(p)))
         }
-        self.pbuf.push(builder);
+        self.buffer.push(builder);
     }
 }
 
@@ -637,40 +632,53 @@ impl<'j, 'args> Iterator for BlockGenerator<'j, 'args> {
 /// sends to JsonPointer
 pub struct JsonPacket {
     ident: Option<usize>,
-    base_path: PointerKind,
-    json: JsonValue,
+    base_path: Option<PointerKind>,
+    json: Option<JsonValue>,
 }
 
 impl JsonPacket {
     fn size_hint(&self) -> Option<usize> {
         match self.json {
-            jObject(ref val) => match val.iter().size_hint() {
+            Some(jObject(ref val)) => match val.iter().size_hint() {
                 (_, Some(ub)) => Some(ub),
                 (lb, None) => Some(lb),
             },
-            jArray(ref val) => Some(val.len()),
+            Some(jArray(ref val)) => Some(val.len()),
             _ => None,
         }
     }
 
-    pub fn into_inner(self) -> (JsonValue, (Option<usize>, PointerKind, Option<usize>)) {
+    pub fn into_inner(
+        self,
+    ) -> (
+        Option<JsonValue>,
+        Option<usize>,
+        (Option<PointerKind>, Option<usize>),
+    ) {
         let hint = self.size_hint();
-        (self.json, (self.ident, self.base_path, hint))
+        (self.json, self.ident, (self.base_path, hint))
     }
 }
 
-impl TryFrom<(Option<usize>, PointerKind, Vec<u8>)> for JsonPacket {
+impl TryFrom<(Option<usize>, Option<PointerKind>, Option<Vec<u8>>)> for JsonPacket {
     type Error = ErrorKind;
 
     fn try_from(
-        packet: (Option<usize>, PointerKind, Vec<u8>),
+        packet: (Option<usize>, Option<PointerKind>, Option<Vec<u8>>),
     ) -> std::result::Result<Self, Self::Error> {
         trace!(
             "trying to convert: {:?} {:?}",
             &packet.1,
-            from_utf8(&packet.2)
+            packet
+                .2
+                .as_ref()
+                .map(|vec| from_utf8(vec))
+                .or_display("untracked")
         );
-        let json: JsonValue = from_slice(packet.2.as_slice())?;
+        let json: Option<JsonValue> = packet
+            .2
+            .map(|data| from_slice(data.as_slice()))
+            .transpose()?;
 
         Ok(JsonPacket {
             ident: packet.0,
@@ -714,11 +722,11 @@ where
 }
 
 pub trait OrDisplay {
-    type Item: std::fmt::Display;
+    type Item: std::fmt::Debug;
     fn or_display<'a, 'b>(&'a self, fallback: &'b str) -> FmtNone<'a, 'b, Self::Item>;
 }
 
-impl<T: std::fmt::Display> OrDisplay for Option<T> {
+impl<T: std::fmt::Debug> OrDisplay for Option<T> {
     type Item = T;
     fn or_display<'a, 'b>(&'a self, fallback: &'b str) -> FmtNone<'a, 'b, T> {
         self.as_ref().map_or(FmtNone::from(None, fallback), |val| {
@@ -727,21 +735,30 @@ impl<T: std::fmt::Display> OrDisplay for Option<T> {
     }
 }
 
-pub struct FmtNone<'a, 'b, T: std::fmt::Display> {
+pub struct FmtNone<'a, 'b, T: std::fmt::Debug> {
     inner: Option<&'a T>,
     or_else: &'b str,
 }
 
-impl<'a, 'b, T: std::fmt::Display> FmtNone<'a, 'b, T> {
+impl<'a, 'b, T: std::fmt::Debug> FmtNone<'a, 'b, T> {
     fn from(inner: Option<&'a T>, or_else: &'b str) -> Self {
         FmtNone { inner, or_else }
     }
 }
 
-impl<'a, 'b, T: std::fmt::Display> std::fmt::Display for FmtNone<'a, 'b, T> {
+impl<'a, 'b, T: std::fmt::Debug> std::fmt::Debug for FmtNone<'a, 'b, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.inner {
+            Some(val) => write!(f, "{:?}", val),
+            None => write!(f, "{}", self.or_else),
+        }
+    }
+}
+
+impl<'a, 'b, T: std::fmt::Debug> std::fmt::Display for FmtNone<'a, 'b, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self.inner {
-            Some(val) => write!(f, "{}", val),
+            Some(val) => write!(f, "{:?}", val),
             None => write!(f, "{}", self.or_else),
         }
     }

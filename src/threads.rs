@@ -89,15 +89,20 @@ pub(crate) fn spawn_workers(
                             "current packet is: {}, {:?}, {:?}",
                             &packet.0.or_display("untracked"),
                             &packet.1,
-                            from_utf8(&packet.2)
+                            packet
+                                .2
+                                .as_ref()
+                                .map(|vec| from_utf8(vec))
+                                .or_display("untracked")
                         );
-                        let (json, metadata) = JsonPacket::try_from(packet)?.into_inner();
-                        let builder = BlockGenerator::new(opts, &json, metadata);
+                        let (json, ident, metadata) = JsonPacket::try_from(packet)?.into_inner();
+                        let builder = BlockGenerator::new(opts, json.as_ref(), metadata);
 
                         for item in builder
                             .map(|mut output| {
-                                output.store(opts, opts.delimiter());
-                                output.store(opts, opts.guard());
+                                output.store(opts, ident);
+                                output.store(opts, Some(opts.delimiter()));
+                                output.store(opts, Some(opts.guard()));
                                 output
                             })
                             .filter_map(|output| output.check(opts.regex()))
@@ -153,23 +158,6 @@ pub(crate) fn spawn_workers(
             let opts = &opts;
 
             let result = || -> Result<()> {
-                fn lazy_eval(
-                    b: bool,
-                    src: &Receiver<ReadKind>,
-                ) -> impl Iterator<Item = (Option<usize>, ReadKind)> + '_ {
-                    let yes = if b {
-                        Some(src.iter().enumerate().map(|(i, r)| (Some(i + 1), r)))
-                    } else {
-                        None
-                    };
-                    let no = if !b {
-                        Some(src.iter().map(|r| (None, r)))
-                    } else {
-                        None
-                    };
-
-                    yes.into_iter().flatten().chain(no.into_iter().flatten())
-                }
                 let iter = eval(&Field::Identifier, lazy_eval, &from_source);
                 // Hot loop
                 for item in iter {
@@ -182,20 +170,34 @@ pub(crate) fn spawn_workers(
                     })?;
                     match (item, opts.by_line()) {
                         ((i, read @ ReadKind::Stdin(_)), true) => {
-                            let mut read_line = LineReader::with_delimiter_and_capacity(
-                                opts.linereader_eol(),
-                                opts.input_buffer_size(),
-                                read.into_inner(),
+                            let mut read_line = eval(
+                                &Field::Value,
+                                |b, (eol, cap, read)| {
+                                    if b {
+                                        Some(LineReader::with_delimiter_and_capacity(
+                                            eol, cap, read,
+                                        ))
+                                    } else {
+                                        None
+                                    }
+                                },
+                                (
+                                    opts.linereader_eol(),
+                                    opts.input_buffer_size(),
+                                    read.into_inner(),
+                                ),
                             );
                             let index = i.as_ref().map(|_| 1);
-                            while let Some(slice) = read_line.next_line() {
+                            while let Some(slice) = read_line.as_mut().map(|lr| lr.next_line()) {
                                 if check_index(opts.regex(), index) {
                                     debug!(
                                         "Processing line {} of input {}...",
                                         index.or_display("untracked"),
                                         i.or_display("untracked")
                                     );
-                                    let reader = slice?.iter().map(|&b| Ok(b));
+                                    //let reader = slice?.iter().map(|&b| Ok(b));
+                                    let reader =
+                                        slice.transpose()?.map(|s| s.iter().map(|&b| Ok(b)));
                                     unwind_json(&opts, index, reader, data_tx.clone())?;
                                     index.map(|i| i + 1);
                                 } else {
@@ -211,11 +213,17 @@ pub(crate) fn spawn_workers(
                         ((index, read), _) => {
                             if check_index(opts.regex(), index) {
                                 debug!("Processing input {}...", index.or_display("untracked"));
-                                let reader = BufReader::with_capacity(
-                                    opts.input_buffer_size(),
-                                    read.into_inner(),
-                                )
-                                .bytes();
+                                let reader = eval(
+                                    &Field::Value,
+                                    |b, (cap, read)| {
+                                        if b {
+                                            Some(BufReader::with_capacity(cap, read).bytes())
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                    (opts.input_buffer_size(), read.into_inner()),
+                                );
                                 unwind_json(&opts, index, reader, data_tx)?;
                             } else {
                                 debug!("Skipping input {}...", index.or_display("untracked"));
@@ -262,4 +270,22 @@ pub(crate) fn spawn_workers(
         })?;
 
     Ok(thReader)
+}
+
+fn lazy_eval(
+    b: bool,
+    src: &Receiver<ReadKind>,
+) -> impl Iterator<Item = (Option<usize>, ReadKind)> + '_ {
+    let yes = if b {
+        Some(src.iter().enumerate().map(|(i, r)| (Some(i + 1), r)))
+    } else {
+        None
+    };
+    let no = if !b {
+        Some(src.iter().map(|r| (None, r)))
+    } else {
+        None
+    };
+
+    yes.into_iter().flatten().chain(no.into_iter().flatten())
 }

@@ -17,17 +17,18 @@ pub trait Pointer<T: Into<PointerKind> = PointerKind> {
     fn as_parts(&self) -> Result<&Vec<PointerParts>>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PointerKind {
     Simple(String),
     Complex(Complex),
 }
 
 impl PointerKind {
-    pub fn new(opts: &ProgramArgs) -> Self {
-        match opts.should_calculate(Field::JmesPath) {
-            true => PointerKind::Complex(Complex::new()),
-            false => PointerKind::Simple(String::new()),
+    pub fn new(opts: &ProgramArgs) -> Option<Self> {
+        match (opts.should_calculate(Field::Pointer), opts.should_calculate(Field::JmesPath)) {
+            (_, true) => Some(PointerKind::Complex(Complex::new())),
+            (true, false) => Some(PointerKind::Simple(String::new())),
+            (false, false) => None,
         }
     }
 }

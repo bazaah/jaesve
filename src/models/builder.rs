@@ -248,22 +248,30 @@ impl OutputBuilder {
     // }
 
     // Checked storage of output fields
-    pub fn store<T: AsField>(&mut self, opts: &ProgramArgs, item: T) {
-        if opts.should_store(item.as_field()) {
-            self.store_unchecked(item)
+    pub fn store<T: AsField>(&mut self, opts: &ProgramArgs, item: Option<T>) {
+        match item {
+            Some(i) => {
+                if opts.should_store(i.as_field()) {
+                    self.store_unchecked(Some(i))
+                }
+            }
+            _ => (),
         }
     }
 
     // Unchecked storage of output fields, should only be used if item was checked in some other way
-    pub fn store_unchecked<T: AsField>(&mut self, item: T) {
-        match <T as Into<BlockKind>>::into(item) {
-            BlockKind::Ident(i) => self.blocks[0] = Some(BlockKind::Ident(i)),
-            BlockKind::Delimiter(i) => self.blocks[1] = Some(BlockKind::Delimiter(i)),
-            BlockKind::Guard(i) => self.blocks[2] = Some(BlockKind::Guard(i)),
-            BlockKind::Type(i) => self.blocks[3] = Some(BlockKind::Type(i)),
-            BlockKind::Pointer(i) => self.blocks[4] = Some(BlockKind::Pointer(i)),
-            BlockKind::Value(i) => self.blocks[5] = Some(BlockKind::Value(i)),
-            BlockKind::Jmes(i) => self.blocks[6] = Some(BlockKind::Jmes(i)),
+    pub fn store_unchecked<T: AsField>(&mut self, item: Option<T>) {
+        match item {
+            Some(i) => match <T as Into<BlockKind>>::into(i) {
+                BlockKind::Ident(i) => self.blocks[0] = Some(BlockKind::Ident(i)),
+                BlockKind::Delimiter(i) => self.blocks[1] = Some(BlockKind::Delimiter(i)),
+                BlockKind::Guard(i) => self.blocks[2] = Some(BlockKind::Guard(i)),
+                BlockKind::Type(i) => self.blocks[3] = Some(BlockKind::Type(i)),
+                BlockKind::Pointer(i) => self.blocks[4] = Some(BlockKind::Pointer(i)),
+                BlockKind::Value(i) => self.blocks[5] = Some(BlockKind::Value(i)),
+                BlockKind::Jmes(i) => self.blocks[6] = Some(BlockKind::Jmes(i)),
+            },
+            None => (),
         }
     }
 
