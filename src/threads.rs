@@ -172,48 +172,42 @@ pub(crate) fn spawn_workers(
                     })?;
                     match (item, opts.by_line()) {
                         ((i, read @ ReadKind::Stdin(_)), true) => {
-                            let mut read_line = eval(
-                                &Field::Value,
-                                |b, (eol, cap, read)| {
-                                    if b {
-                                        Some(LineReader::with_delimiter_and_capacity(
-                                            eol, cap, read,
-                                        ))
-                                    } else {
-                                        None
-                                    }
-                                },
-                                (
-                                    opts.linereader_eol(),
-                                    opts.input_buffer_size(),
-                                    read.into_inner(),
-                                ),
+                            let mut line_reader = LineReader::with_delimiter_and_capacity(
+                                opts.linereader_eol(),
+                                opts.input_buffer_size(),
+                                read.into_inner(),
                             );
-                            let index = i.as_ref().map(|_| 1);
-                            while let Some(slice) = read_line.as_mut().map(|lr| lr.next_line()) {
+                            let mut index = i.as_ref().map(|_| 1);
+                            while let Some(slice) = line_reader.next_line().map(|res| {
+                                if opts.should_calculate(Field::Value) {
+                                    Some(res)
+                                } else {
+                                    None
+                                }
+                            }) {
                                 if check_index(opts.regex(), index) {
                                     debug!(
                                         "Processing line {} of input {}...",
                                         index.or_display("untracked"),
                                         i.or_display("untracked")
                                     );
-                                    //let reader = slice?.iter().map(|&b| Ok(b));
                                     let reader =
                                         slice.transpose()?.map(|s| s.iter().map(|&b| Ok(b)));
                                     unwind_json(&opts, index, reader, data_tx.clone())?;
-                                    index.map(|i| i + 1);
+                                    index = index.map(|i| i + 1);
                                 } else {
                                     debug!(
                                         "Skipping line {} of input {}...",
                                         index.or_display("untracked"),
                                         i.or_display("untracked")
                                     );
-                                    index.map(|i| i + 1);
+                                    index = index.map(|i| i + 1);
                                 }
                             }
                         }
                         ((index, read), _) => {
                             if check_index(opts.regex(), index) {
+                                warn!("In non --lines part");
                                 debug!("Processing input {}...", index.or_display("untracked"));
                                 let reader = eval(
                                     &Field::Value,
