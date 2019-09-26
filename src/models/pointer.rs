@@ -2,8 +2,8 @@ use {
     crate::{
         cli::ProgramArgs,
         models::{
-            field::Field,
             error::{ErrorKind, Result},
+            field::Field,
         },
     },
     std::{fmt::Display, sync::Arc},
@@ -25,7 +25,10 @@ pub enum PointerKind {
 
 impl PointerKind {
     pub fn new(opts: &ProgramArgs) -> Option<Self> {
-        match (opts.should_calculate(Field::Pointer), opts.should_calculate(Field::JmesPath)) {
+        match (
+            opts.should_calculate(Field::Pointer),
+            opts.should_calculate(Field::JmesPath),
+        ) {
             (_, true) => Some(PointerKind::Complex(Complex::new())),
             (true, false) => Some(PointerKind::Simple(String::new())),
             (false, false) => None,

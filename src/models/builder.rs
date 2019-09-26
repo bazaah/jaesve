@@ -2,9 +2,10 @@ use {
     crate::{
         cli::ProgramArgs,
         models::{
-            assets::{RegexOptions},
+            assets::RegexOptions,
+            block::BlockKind,
             error::ErrorKind,
-            field::{AsField, Delimiter, Field, Guard, JType, JmesPath}
+            field::{AsField, Field},
         },
     },
     fnv::FnvHashMap,
@@ -34,75 +35,6 @@ where
     fn value(&self) -> Result<Self::Block, Self::Error>;
 
     fn jmes(&self) -> Result<Self::Block, Self::Error>;
-}
-
-/// Enum containing every valid output kind
-/// used by OutputBuilder / Output
-#[derive(Debug, Clone)]
-pub enum BlockKind {
-    Ident(usize),
-    Delimiter(Delimiter),
-    Guard(Guard),
-    Type(JType),
-    Pointer(String),
-    Value(Option<String>),
-    Jmes(JmesPath),
-}
-
-impl std::fmt::Display for BlockKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            BlockKind::Ident(i) => write!(f, "{}", i),
-            BlockKind::Delimiter(d) => write!(f, "{}", d),
-            BlockKind::Guard(g) => write!(f, "{}", g),
-            BlockKind::Type(t) => write!(f, "{}", t),
-            BlockKind::Pointer(p) => write!(f, "{}", p),
-            BlockKind::Value(v) => write!(f, "{}", v.as_ref().unwrap_or(&String::default())),
-            BlockKind::Jmes(j) => write!(f, "{}", j),
-        }
-    }
-}
-
-impl Into<BlockKind> for usize {
-    fn into(self) -> BlockKind {
-        BlockKind::Ident(self)
-    }
-}
-
-impl Into<BlockKind> for Delimiter {
-    fn into(self) -> BlockKind {
-        BlockKind::Delimiter(self)
-    }
-}
-
-impl Into<BlockKind> for Guard {
-    fn into(self) -> BlockKind {
-        BlockKind::Guard(self)
-    }
-}
-
-impl Into<BlockKind> for JType {
-    fn into(self) -> BlockKind {
-        BlockKind::Type(self)
-    }
-}
-
-impl Into<BlockKind> for String {
-    fn into(self) -> BlockKind {
-        BlockKind::Pointer(self)
-    }
-}
-
-impl Into<BlockKind> for Option<String> {
-    fn into(self) -> BlockKind {
-        BlockKind::Value(self)
-    }
-}
-
-impl Into<BlockKind> for JmesPath {
-    fn into(self) -> BlockKind {
-        BlockKind::Jmes(self)
-    }
 }
 
 /// Container for the various final parts
@@ -348,11 +280,11 @@ impl OutputBuilder {
                     _ => Some(self),
                 },
                 Field::Pointer => match &self.blocks[4] {
-                    Some(BlockKind::Pointer(ref p)) if !regex.pattern().is_match(p) => None,
+                    Some(BlockKind::Pointer(ref p)) if !regex.pattern().is_match(p.as_ref()) => None,
                     _ => Some(self),
                 },
                 Field::Value => match self.blocks[5] {
-                    Some(BlockKind::Value(ref o)) => match o {
+                    Some(BlockKind::Value(ref o)) => match o.as_ref() {
                         Some(v) if !regex.pattern().is_match(v) => None,
                         // This arm excludes any jptrs that do not a have an (single) associated value
                         // i.e objects and arrays... for example

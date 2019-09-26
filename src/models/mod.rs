@@ -6,9 +6,10 @@ use {
             assets::{IdentifyFirstLast, ReadFrom, ReadKind, RegexOptions},
             builder::{Builder, Output},
             error::{ErrorKind, Result},
+            field::Field,
             pointer::{Pointer, PointerKind},
             scan::JsonScan,
-            field::Field
+            block::Identifier,
         },
         CLI,
     },
@@ -23,6 +24,7 @@ use {
 };
 
 pub mod assets;
+pub mod block;
 pub mod builder;
 pub mod error;
 pub mod field;
@@ -30,7 +32,7 @@ pub mod pointer;
 pub mod scan;
 
 /// Type def for the reader -> builder channel
-pub type ToBuilder = (Option<usize>, Option<PointerKind>, Option<Vec<u8>>);
+pub type ToBuilder = (Option<Identifier>, Option<PointerKind>, Option<Vec<u8>>);
 /// Type def for the builder -> writer channel
 pub type ToWriter = Output;
 
@@ -209,7 +211,7 @@ where
         },
         None => {
             channel
-                .send((ident, PointerKind::new(opts), None))
+                .send((ident.map(|i| i.into()), PointerKind::new(opts), None))
                 .map_err(|_| {
                     ErrorKind::UnexpectedChannelClose(format!(
                         "builder in |reader -> builder| channel has hung up"
@@ -306,7 +308,7 @@ where
         }
     }
 
-    channel.send((ident, jptr, Some(buffer))).map_err(|_| {
+    channel.send((ident.map(|i| i.into()), jptr, Some(buffer))).map_err(|_| {
         ErrorKind::UnexpectedChannelClose(format!(
             "builder in |reader -> builder| channel has hung up"
         ))
@@ -336,7 +338,7 @@ where
         .collect();
 
     channel
-        .send((ident, PointerKind::new(opts), Some(buffer?)))
+        .send((ident.map(|i| i.into()), PointerKind::new(opts), Some(buffer?)))
         .map_err(|_| {
             ErrorKind::UnexpectedChannelClose(format!(
                 "builder in |reader -> builder| channel has hung up"

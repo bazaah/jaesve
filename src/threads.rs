@@ -5,10 +5,11 @@ use {
         match_with_log,
         models::{
             assets::{BlockGenerator, JsonPacket, OrDisplay, ReadKind},
-            field::Field,
             check_index,
             error::{ErrorKind, Result},
-            eval, get_writer, unwind_json, write_formatted_output, ToBuilder, ToWriter,
+            eval,
+            field::Field,
+            get_writer, unwind_json, write_formatted_output, ToBuilder, ToWriter,
         },
     },
     linereader::LineReader,

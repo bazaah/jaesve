@@ -2,14 +2,15 @@ use {
     crate::{
         cli::ProgramArgs,
         models::{
+            block::{Identifier, JType, JmesPath, JsonPointer, JsonValue},
             builder::OutputBuilder,
             error::ErrorKind,
-            field::{Field, JType, JmesPath},
+            field::Field,
             pointer::{Pointer, PointerKind, PointerParts},
         },
     },
     serde_json::{
-        from_slice, Value as JsonValue,
+        from_slice, Value as Json,
         Value::{
             Array as jArray, Bool as jBool, Null as jNull, Number as jNumber, Object as jObject,
             String as jString,
@@ -150,7 +151,7 @@ impl<'a> std::fmt::Display for JmesDisplay<'a> {
 /// JSON object into the components that Output / Builder
 /// will use
 pub struct BlockGenerator<'j, 'args: 'j> {
-    queue: VecDeque<(Option<&'j JsonValue>, Option<PointerKind>)>,
+    queue: VecDeque<(Option<&'j Json>, Option<PointerKind>)>,
     buffer: Vec<OutputBuilder>,
     opts: &'args ProgramArgs,
     pristine: bool,
@@ -159,7 +160,7 @@ pub struct BlockGenerator<'j, 'args: 'j> {
 impl<'j, 'args> BlockGenerator<'j, 'args> {
     pub fn new(
         opts: &'args ProgramArgs,
-        json: Option<&'j JsonValue>,
+        json: Option<&'j Json>,
         meta: (Option<PointerKind>, Option<usize>),
     ) -> Self {
         let (mut queue, buffer) = match (json, meta.1) {
@@ -178,17 +179,16 @@ impl<'j, 'args> BlockGenerator<'j, 'args> {
 
     pub fn parse_next(&mut self) -> Option<OutputBuilder> {
         loop {
-            let maybe_value = self.queue.pop_front();
-            match maybe_value {
+            match self.queue.pop_front() {
                 Some(value) => match value {
                     (Some(jObject(map)), ref ptr) => {
                         for (k, v) in map.iter() {
                             let new_path = ptr.as_ref().map(|p| p.clone_extend(k.as_str()));
                             if v.is_object() {
-                                self.output_checked(&new_path, None, v.into());
+                                self.output_checked(&new_path, None.into(), v.into());
                             }
                             if v.is_array() {
-                                self.output_checked(&new_path, None, v.into());
+                                self.output_checked(&new_path, None.into(), v.into());
                             }
                             self.queue.push_back((Some(v), new_path));
                         }
@@ -200,22 +200,51 @@ impl<'j, 'args> BlockGenerator<'j, 'args> {
                         }
                     }
                     (Some(jString(val)), ref ptr) => {
-                        self.output_checked(&ptr, Some(val.to_string()), value.0.unwrap().into());
+                        self.output_checked(
+                            &ptr,
+                            Some(val)
+                                .filter(|_| self.opts.should_calculate(Field::Value))
+                                .map(|val| val.clone())
+                                .into(),
+                            value.0.unwrap().into(),
+                        );
                         break;
                     }
                     (Some(jNumber(val)), ref ptr) => {
-                        self.output_checked(&ptr, Some(val.to_string()), value.0.unwrap().into());
+                        self.output_checked(
+                            &ptr,
+                            Some(val)
+                                .filter(|_| self.opts.should_calculate(Field::Value))
+                                .map(|val| val.to_string())
+                                .into(),
+                            value.0.unwrap().into(),
+                        );
                         break;
                     }
                     (Some(jBool(val)), ref ptr) => {
-                        self.output_checked(&ptr, Some(val.to_string()), value.0.unwrap().into());
+                        self.output_checked(
+                            &ptr,
+                            Some(val)
+                                .filter(|_| self.opts.should_calculate(Field::Value))
+                                .map(|val| val.to_string())
+                                .into(),
+                            value.0.unwrap().into(),
+                        );
                         break;
                     }
                     (Some(tp @ jNull), ptr) => {
-                        self.output_checked(&ptr, Some(String::from("null")), tp.into());
+                        self.output_checked(
+                            &ptr,
+                            Some(tp)
+                                .filter(|_| self.opts.should_calculate(Field::Value))
+                                .map(|_| String::from("null"))
+                                .into(),
+                            tp.into(),
+                        );
                         break;
                     }
                     (None, _) => {
+                        // Ugly fix for if there is no Json to unwind, should rewrite this somehow
                         if self.pristine {
                             self.pristine = false;
                             return Some(OutputBuilder::new());
@@ -231,15 +260,18 @@ impl<'j, 'args> BlockGenerator<'j, 'args> {
     }
 
     /// Custom output storage checker due to the difficulties induced by PointerKind
-    fn output_checked(&mut self, ptr: &Option<PointerKind>, val: Option<String>, jtype: JType) {
+    fn output_checked(&mut self, ptr: &Option<PointerKind>, jval: JsonValue, jtype: JType) {
         let s = &*self;
         let mut builder = OutputBuilder::new();
 
         if s.opts.should_store(Field::Pointer) {
-            builder.store_unchecked(ptr.as_ref().map(|p| p.as_complete()))
+            builder.store_unchecked(
+                ptr.as_ref()
+                    .map(|p| -> JsonPointer { p.as_complete().into() }),
+            )
         }
         if s.opts.should_store(Field::Value) {
-            builder.store_unchecked(Some(val))
+            builder.store_unchecked(Some(jval))
         }
         if s.opts.should_store(Field::Type) {
             builder.store_unchecked(Some(jtype))
@@ -263,9 +295,9 @@ impl<'j, 'args> Iterator for BlockGenerator<'j, 'args> {
 /// turning the raw parts that the scanner / unwinding
 /// sends to JsonPointer
 pub struct JsonPacket {
-    ident: Option<usize>,
+    ident: Option<Identifier>,
     base_path: Option<PointerKind>,
-    json: Option<JsonValue>,
+    json: Option<Json>,
 }
 
 impl JsonPacket {
@@ -283,8 +315,8 @@ impl JsonPacket {
     pub fn into_inner(
         self,
     ) -> (
-        Option<JsonValue>,
-        Option<usize>,
+        Option<Json>,
+        Option<Identifier>,
         (Option<PointerKind>, Option<usize>),
     ) {
         let hint = self.size_hint();
@@ -292,11 +324,11 @@ impl JsonPacket {
     }
 }
 
-impl TryFrom<(Option<usize>, Option<PointerKind>, Option<Vec<u8>>)> for JsonPacket {
+impl TryFrom<(Option<Identifier>, Option<PointerKind>, Option<Vec<u8>>)> for JsonPacket {
     type Error = ErrorKind;
 
     fn try_from(
-        packet: (Option<usize>, Option<PointerKind>, Option<Vec<u8>>),
+        packet: (Option<Identifier>, Option<PointerKind>, Option<Vec<u8>>),
     ) -> std::result::Result<Self, Self::Error> {
         trace!(
             "trying to convert: {:?} {:?}",
@@ -307,7 +339,7 @@ impl TryFrom<(Option<usize>, Option<PointerKind>, Option<Vec<u8>>)> for JsonPack
                 .map(|vec| from_utf8(vec))
                 .or_display("untracked")
         );
-        let json: Option<JsonValue> = packet
+        let json: Option<Json> = packet
             .2
             .map(|data| from_slice(data.as_slice()))
             .transpose()?;

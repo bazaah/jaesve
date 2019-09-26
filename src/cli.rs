@@ -2,8 +2,9 @@
 use {
     crate::models::{
         assets::{ReadFrom, RegexOptions},
-        field::{Delimiter, Field, Guard},
+        block::{Delimiter, Guard},
         error::ErrorKind,
+        field::Field,
         get_reader,
     },
     clap::{crate_authors, crate_version, App, Arg, ArgMatches as Matches, SubCommand},
