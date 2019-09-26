@@ -59,6 +59,7 @@ impl std::fmt::Display for ReadFrom {
 
 /// Wrapper around supported Read types
 /// avoiding dynamic dispatch
+#[derive(Debug)]
 pub enum ReadKind {
     File(File),
     Stdin(Stdin),

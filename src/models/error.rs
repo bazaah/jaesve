@@ -1,6 +1,43 @@
-use std::{error::Error, fmt::Debug, io::Error as ioError, process::exit, str::Utf8Error};
+use std::{error, fmt::Debug, io::Error as ioError, process::exit, str::Utf8Error};
 
 pub(crate) type Result<T> = std::result::Result<T, ErrorKind>;
+
+#[derive(Debug)]
+struct Error {
+    kind: ErrorKind,
+    context: Option<Context>,
+}
+
+impl<E, C> From<(E, C)> for Error
+where
+    E: Into<ErrorKind>,
+    C: Into<Context>,
+{
+    fn from((err, context): (E, C)) -> Self {
+        Error {
+            kind: err.into(),
+            context: Some(context.into()),
+        }
+    }
+}
+
+impl From<ErrorKind> for Error {
+    fn from(kind: ErrorKind) -> Self {
+        Error { kind, context: None }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Context {
+    Overide(String),
+    DataLenEqualLineBuffer
+}
+
+impl<T: AsRef<str>> From<T> for Context {
+    fn from(s: T) -> Self {
+        Context::Overide(s.as_ref().to_string())
+    }
+}
 
 /// Contains any error emitted by this program
 #[derive(Debug)]
@@ -59,8 +96,8 @@ impl From<Utf8Error> for ErrorKind {
 }
 
 // E => ErrorKind, where E implements Error
-impl From<Box<dyn Error>> for ErrorKind {
-    fn from(e: Box<dyn Error>) -> Self {
+impl From<Box<dyn error::Error>> for ErrorKind {
+    fn from(e: Box<dyn error::Error>) -> Self {
         ErrorKind::Message(format!("{}", e))
     }
 }
@@ -85,8 +122,8 @@ impl std::fmt::Display for ErrorKind {
     }
 }
 
-impl Error for ErrorKind {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
+impl error::Error for ErrorKind {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             ErrorKind::Io(e) => Some(e),
             ErrorKind::UTF8(e) => Some(e),
@@ -111,7 +148,7 @@ impl<T, E> ErrContext<T, E> for std::result::Result<T, E> {
 /// Handles program return codes
 pub(crate) enum ProgramExit<T>
 where
-    T: Error,
+    T: error::Error,
 {
     Success,
     Failure(T),
@@ -119,7 +156,7 @@ where
 
 impl<T> ProgramExit<T>
 where
-    T: Into<i32> + Debug + Error,
+    T: Into<i32> + Debug + error::Error,
 {
     pub fn exit(self) -> ! {
         match self {
