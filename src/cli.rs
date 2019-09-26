@@ -421,7 +421,6 @@ impl<'a, 'b> ProgramArgs {
             .map_or(false, |b| *b)
     }
 
-    /* <=== SubCommands ===> */
     /// Checks if the 'completion' subcommand is active
     /// if it is, generate completion script and exit
     fn if_completions_exit(subcommand: Option<&Matches<'a>>) {
@@ -437,8 +436,8 @@ impl<'a, 'b> ProgramArgs {
             }
         };
 
-        match subcommand {
-            Some(sub_store) => sub_store
+        if let Some(sub_store) = subcommand {
+            sub_store
                 .value_of("completions_file")
                 .and_then(|path| {
                     let mut writer = writer(Some(path));
@@ -459,11 +458,11 @@ impl<'a, 'b> ProgramArgs {
                     Some(writer.1)
                 })
                 .map(|code| std::process::exit(code))
-                .unwrap(),
-            None => {}
-        };
+                .unwrap()
+        }
     }
 
+    /* <=== SubCommands ===> */
     pub fn logger(&self) -> Option<&HashSet<String>> {
         self.subcommand_config.logger.as_ref()
     }
@@ -621,9 +620,7 @@ impl DependencyTree {
                 buffer.pop()
             })
             .for_each(|(field, is_output)| {
-                if !set.contains_key(&field) {
-                    set.insert(field, is_output);
-                }
+                set.entry(field).or_insert(is_output);
             });
         // Populate the dependency map with the primary Fields, overwriting secondary values
         relevant

@@ -4,12 +4,12 @@ use {
         match_with_log,
         models::{
             assets::{IdentifyFirstLast, ReadFrom, ReadKind, RegexOptions},
+            block::Identifier,
             builder::{Builder, Output},
             error::{ErrorKind, Result},
             field::Field,
             pointer::{Pointer, PointerKind},
             scan::JsonScan,
-            block::Identifier,
         },
         CLI,
     },
@@ -136,7 +136,7 @@ pub fn initialize_logging(opts: &ProgramArgs) {
                             ))
                         })
                         .ok()
-                        .map(|f| Some(f)),
+                        .map(Some),
                 })
                 .map(|path| -> Box<dyn SharedLogger> {
                     match path {
@@ -184,7 +184,7 @@ where
 {
     debug!("Started parsing a JSON doc");
     let pointer = eval_raw(|opts, _| PointerKind::new(opts), ());
-    let mut maybe_scanner = source.map(|src| JsonScan::new(src));
+    let mut maybe_scanner = source.map(JsonScan::new);
     match maybe_scanner.as_mut() {
         Some(scanner) => loop {
             match scanner.next() {
@@ -308,11 +308,13 @@ where
         }
     }
 
-    channel.send((ident.map(|i| i.into()), jptr, Some(buffer))).map_err(|_| {
-        ErrorKind::UnexpectedChannelClose(format!(
-            "builder in |reader -> builder| channel has hung up"
-        ))
-    })?;
+    channel
+        .send((ident.map(|i| i.into()), jptr, Some(buffer)))
+        .map_err(|_| {
+            ErrorKind::UnexpectedChannelClose(format!(
+                "builder in |reader -> builder| channel has hung up"
+            ))
+        })?;
 
     drop(channel);
     Ok(())
@@ -338,7 +340,11 @@ where
         .collect();
 
     channel
-        .send((ident.map(|i| i.into()), PointerKind::new(opts), Some(buffer?)))
+        .send((
+            ident.map(|i| i.into()),
+            PointerKind::new(opts),
+            Some(buffer?),
+        ))
         .map_err(|_| {
             ErrorKind::UnexpectedChannelClose(format!(
                 "builder in |reader -> builder| channel has hung up"
@@ -386,7 +392,7 @@ where
             write!(w, "{}", blocks.delimiter()?)?;
         }
     }
-    writeln!(w, "")?;
+    writeln!(w)?;
 
     Ok(())
 }

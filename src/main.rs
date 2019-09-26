@@ -1,3 +1,4 @@
+#![allow(clippy::useless_format, clippy::match_bool)]
 #[macro_use]
 extern crate log;
 #[macro_use]

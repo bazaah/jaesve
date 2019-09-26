@@ -116,7 +116,7 @@ impl<'a> From<&'a Vec<PointerParts>> for JmesDisplay<'a> {
 impl<'a> std::fmt::Display for JmesDisplay<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         // Check for unsupported JSON, i.e JSON literals
-        if !(self.0.len() == 0) {
+        if self.0.is_empty() {
             for (first, _, item) in self
                 .0
                 .iter()
@@ -178,82 +178,79 @@ impl<'j, 'args> BlockGenerator<'j, 'args> {
     }
 
     pub fn parse_next(&mut self) -> Option<OutputBuilder> {
-        loop {
-            match self.queue.pop_front() {
-                Some(value) => match value {
-                    (Some(jObject(map)), ref ptr) => {
-                        for (k, v) in map.iter() {
-                            let new_path = ptr.as_ref().map(|p| p.clone_extend(k.as_str()));
-                            if v.is_object() {
-                                self.output_checked(&new_path, None.into(), v.into());
-                            }
-                            if v.is_array() {
-                                self.output_checked(&new_path, None.into(), v.into());
-                            }
-                            self.queue.push_back((Some(v), new_path));
+        while let Some(value) = self.queue.pop_front() {
+            match value {
+                (Some(jObject(map)), ref ptr) => {
+                    for (k, v) in map.iter() {
+                        let new_path = ptr.as_ref().map(|p| p.clone_extend(k.as_str()));
+                        if v.is_object() {
+                            self.output_checked(&new_path, None.into(), v.into());
                         }
-                    }
-                    (Some(jArray(a)), ref ptr) => {
-                        for (i, v) in a.iter().map(|v| Some(v)).enumerate() {
-                            let new_path = ptr.as_ref().map(|p| p.clone_extend(i));
-                            self.queue.push_back((v, new_path));
+                        if v.is_array() {
+                            self.output_checked(&new_path, None.into(), v.into());
                         }
+                        self.queue.push_back((Some(v), new_path));
                     }
-                    (Some(jString(val)), ref ptr) => {
-                        self.output_checked(
-                            &ptr,
-                            Some(val)
-                                .filter(|_| self.opts.should_calculate(Field::Value))
-                                .map(|val| val.clone())
-                                .into(),
-                            value.0.unwrap().into(),
-                        );
+                }
+                (Some(jArray(a)), ref ptr) => {
+                    for (i, v) in a.iter().map(Some).enumerate() {
+                        let new_path = ptr.as_ref().map(|p| p.clone_extend(i));
+                        self.queue.push_back((v, new_path));
+                    }
+                }
+                (Some(jString(val)), ref ptr) => {
+                    self.output_checked(
+                        &ptr,
+                        Some(val)
+                            .filter(|_| self.opts.should_calculate(Field::Value))
+                            .cloned()
+                            .into(),
+                        value.0.unwrap().into(),
+                    );
+                    break;
+                }
+                (Some(jNumber(val)), ref ptr) => {
+                    self.output_checked(
+                        &ptr,
+                        Some(val)
+                            .filter(|_| self.opts.should_calculate(Field::Value))
+                            .map(|val| val.to_string())
+                            .into(),
+                        value.0.unwrap().into(),
+                    );
+                    break;
+                }
+                (Some(jBool(val)), ref ptr) => {
+                    self.output_checked(
+                        &ptr,
+                        Some(val)
+                            .filter(|_| self.opts.should_calculate(Field::Value))
+                            .map(|val| val.to_string())
+                            .into(),
+                        value.0.unwrap().into(),
+                    );
+                    break;
+                }
+                (Some(tp @ jNull), ptr) => {
+                    self.output_checked(
+                        &ptr,
+                        Some(tp)
+                            .filter(|_| self.opts.should_calculate(Field::Value))
+                            .map(|_| String::from("null"))
+                            .into(),
+                        tp.into(),
+                    );
+                    break;
+                }
+                (None, _) => {
+                    // Ugly fix for if there is no Json to unwind, should rewrite this somehow
+                    if self.pristine {
+                        self.pristine = false;
+                        return Some(OutputBuilder::new());
+                    } else {
                         break;
                     }
-                    (Some(jNumber(val)), ref ptr) => {
-                        self.output_checked(
-                            &ptr,
-                            Some(val)
-                                .filter(|_| self.opts.should_calculate(Field::Value))
-                                .map(|val| val.to_string())
-                                .into(),
-                            value.0.unwrap().into(),
-                        );
-                        break;
-                    }
-                    (Some(jBool(val)), ref ptr) => {
-                        self.output_checked(
-                            &ptr,
-                            Some(val)
-                                .filter(|_| self.opts.should_calculate(Field::Value))
-                                .map(|val| val.to_string())
-                                .into(),
-                            value.0.unwrap().into(),
-                        );
-                        break;
-                    }
-                    (Some(tp @ jNull), ptr) => {
-                        self.output_checked(
-                            &ptr,
-                            Some(tp)
-                                .filter(|_| self.opts.should_calculate(Field::Value))
-                                .map(|_| String::from("null"))
-                                .into(),
-                            tp.into(),
-                        );
-                        break;
-                    }
-                    (None, _) => {
-                        // Ugly fix for if there is no Json to unwind, should rewrite this somehow
-                        if self.pristine {
-                            self.pristine = false;
-                            return Some(OutputBuilder::new());
-                        } else {
-                            break;
-                        }
-                    }
-                },
-                None => break,
+                }
             }
         }
         self.buffer.pop()
@@ -291,6 +288,12 @@ impl<'j, 'args> Iterator for BlockGenerator<'j, 'args> {
     }
 }
 
+type ToBlockGen = (
+    Option<Json>,
+    Option<Identifier>,
+    (Option<PointerKind>, Option<usize>),
+);
+
 /// Convenience intermediate struct for
 /// turning the raw parts that the scanner / unwinding
 /// sends to JsonPointer
@@ -312,13 +315,7 @@ impl JsonPacket {
         }
     }
 
-    pub fn into_inner(
-        self,
-    ) -> (
-        Option<Json>,
-        Option<Identifier>,
-        (Option<PointerKind>, Option<usize>),
-    ) {
+    pub fn into_inner(self) -> ToBlockGen {
         let hint = self.size_hint();
         (self.json, self.ident, (self.base_path, hint))
     }

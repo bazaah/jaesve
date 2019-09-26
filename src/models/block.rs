@@ -365,7 +365,7 @@ impl<'a> From<&'a Vec<PointerParts>> for JmesDisplay<'a> {
 impl<'a> std::fmt::Display for JmesDisplay<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         // Check for unsupported JSON, i.e JSON literals
-        if !(self.0.len() == 0) {
+        if !self.0.is_empty() {
             for (first, _, item) in self
                 .0
                 .iter()
