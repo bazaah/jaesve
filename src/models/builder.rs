@@ -168,18 +168,6 @@ impl OutputBuilder {
         Self { blocks }
     }
 
-    // TODO: Figure out a good way to do this
-    // pub fn store_multiple<T: AsField>(
-    //     mut self,
-    //     opts: &ProgramArgs,
-    //     var_items: &mut [Option<T>],
-    // ) -> Self {
-    //     for item in var_items {
-    //         self.store(opts, item.take().unwrap())
-    //     }
-    //     self
-    // }
-
     // Checked storage of output fields
     pub fn store<T: AsField>(&mut self, opts: &ProgramArgs, item: Option<T>) {
         if let Some(i) = item {
@@ -208,8 +196,7 @@ impl OutputBuilder {
         let mut blocks =
             FnvHashMap::with_capacity_and_hasher(self.blocks.len(), Default::default());
         for opt in &mut self.blocks {
-            if opt.is_some() {
-                let block = opt.take().unwrap();
+            opt.take().map(|block| {
                 // Hardcoded usizes for keys
                 // If you change these YOU MUST UPDATE the
                 // store_unchecked method AND the get_xx
@@ -237,7 +224,7 @@ impl OutputBuilder {
                         blocks.insert(6, j);
                     }
                 }
-            }
+            });
         }
 
         Output { blocks }

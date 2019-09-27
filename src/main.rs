@@ -10,7 +10,7 @@ use {
         models::{
             assets::ReadKind,
             error::Result,
-            error::{ErrorKind, ProgramExit},
+            error::{Context, ErrContext, ErrorKind, ProgramExit},
             initialize_logging, set_reader,
         },
         threads::spawn_workers,
@@ -50,24 +50,17 @@ fn try_main() -> Result<()> {
     // Hot loop
     for source in CLI.reader_list() {
         let read_from: ReadKind = set_reader(source);
-        tx.send(read_from).map_err(|_| {
-            ErrorKind::UnexpectedChannelClose(format!(
-                "reader in |main -> reader| channel has hung up"
-            ))
-        })?;
+        tx.send(read_from).context(Context::umcc("Reader"))?;
     }
 
     // Signals that that no new input sources will be sent
     drop(tx);
 
     // Waits for remaining threads to complete
-    reader.join().map_err(|_| {
-        ErrorKind::ThreadFailed(format!(
-            "{}",
-            std::thread::current().name().unwrap_or("unnamed")
-        ))
-        // join() returns a Result<Result<(), ErrorKind>, ErrorKind>, hence the double question mark
-    })??;
+    reader
+        .join()
+        .map_err(|_| ErrorKind::ThreadFailed)
+        .context(Context::tp("Reader"))??;
     // Return 0
     Ok(())
 }

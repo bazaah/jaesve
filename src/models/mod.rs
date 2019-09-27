@@ -1,17 +1,16 @@
 use {
     crate::{
         cli::ProgramArgs,
-        match_with_log,
         models::{
             assets::{IdentifyFirstLast, ReadFrom, ReadKind, RegexOptions},
             block::Identifier,
             builder::{Builder, Output},
-            error::{ErrorKind, Result},
+            error::{Context, ErrContext, ErrorKind, Result},
             field::Field,
             pointer::{Pointer, PointerKind},
             scan::JsonScan,
         },
-        CLI,
+        with_log, CLI,
     },
     simplelog::*,
     std::{
@@ -40,24 +39,24 @@ pub type ToWriter = Output;
 // w: (_, bool), true => append, false => create
 pub fn get_writer(w: &(Option<String>, bool)) -> Box<dyn ioWrite> {
     match w {
-        (Some(file_name), false) => match_with_log!(
+        (Some(file_name), false) => with_log!(
             match File::create(file_name).ok() {
-                Some(file) => match_with_log!(Box::new(file), info!("Success!")),
-                None => match_with_log!(Box::new(cout()), warn!("Failed! Switching to stdout...")),
+                Some(file) => with_log!(Box::new(file), info!("Success!")),
+                None => with_log!(Box::new(cout()), warn!("Failed! Switching to stdout...")),
             },
             info!("Attempting to create {}...", file_name)
         ),
-        (Some(file_name), true) => match_with_log!(
+        (Some(file_name), true) => with_log!(
             match OpenOptions::new().append(true).open(file_name) {
-                Ok(file) => match_with_log!(Box::new(file), info!("Success!")),
-                Err(e) => match_with_log!(
+                Ok(file) => with_log!(Box::new(file), info!("Success!")),
+                Err(e) => with_log!(
                     Box::new(cout()),
                     warn!("Unable to open file: {}, switching to stdout...", e)
                 ),
             },
             info!("Attempting to append to {}...", file_name)
         ),
-        (None, _) => match_with_log!(
+        (None, _) => with_log!(
             Box::new(cout()),
             info!("No output file detected, defaulting to stdout...")
         ),
@@ -84,21 +83,19 @@ pub fn get_reader(r: Option<&str>) -> Option<ReadFrom> {
 pub fn set_reader(src: &Option<ReadFrom>) -> ReadKind {
     match src {
         Some(s) => match s {
-            ReadFrom::File(path) => match_with_log!(
+            ReadFrom::File(path) => with_log!(
                 match File::open(path) {
-                    Ok(f) => match_with_log!(ReadKind::File(f), info!("Success! ({:?})", path)),
-                    Err(e) => match_with_log!(
+                    Ok(f) => with_log!(ReadKind::File(f), info!("Success! ({:?})", path)),
+                    Err(e) => with_log!(
                         ReadKind::Stdin(cin()),
                         warn!("Failed! {}, switching to stdin... ({:?})", e, path)
                     ),
                 },
                 info!("Attempting to read from {:?}...", path)
             ),
-            ReadFrom::Stdin => {
-                match_with_log!(ReadKind::Stdin(cin()), info!("Reading from stdin..."))
-            }
+            ReadFrom::Stdin => with_log!(ReadKind::Stdin(cin()), info!("Reading from stdin...")),
         },
-        None => match_with_log!(
+        None => with_log!(
             ReadKind::Stdin(cin()),
             info!("No input source found, defaulting to stdin...")
         ),
@@ -212,11 +209,7 @@ where
         None => {
             channel
                 .send((ident.map(|i| i.into()), PointerKind::new(opts), None))
-                .map_err(|_| {
-                    ErrorKind::UnexpectedChannelClose(format!(
-                        "builder in |reader -> builder| channel has hung up"
-                    ))
-                })?;
+                .context(Context::udcc())?;
 
             drop(channel);
         }
@@ -310,11 +303,7 @@ where
 
     channel
         .send((ident.map(|i| i.into()), jptr, Some(buffer)))
-        .map_err(|_| {
-            ErrorKind::UnexpectedChannelClose(format!(
-                "builder in |reader -> builder| channel has hung up"
-            ))
-        })?;
+        .context(Context::udcc())?;
 
     drop(channel);
     Ok(())
@@ -345,11 +334,8 @@ where
             PointerKind::new(opts),
             Some(buffer?),
         ))
-        .map_err(|_| {
-            ErrorKind::UnexpectedChannelClose(format!(
-                "builder in |reader -> builder| channel has hung up"
-            ))
-        })?;
+        .map_err(|_| ErrorKind::ChannelError)
+        .context(Context::udcc())?;
 
     Ok(())
 }

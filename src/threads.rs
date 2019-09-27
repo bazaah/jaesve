@@ -2,15 +2,15 @@
 use {
     crate::{
         cli::ProgramArgs,
-        match_with_log,
         models::{
             assets::{BlockGenerator, JsonPacket, OrDisplay, ReadKind},
             check_index,
-            error::{ErrorKind, Result},
+            error::{Context, ErrContext, ErrorKind, Result},
             eval,
             field::Field,
             get_writer, unwind_json, write_formatted_output, ToBuilder, ToWriter,
         },
+        with_log,
     },
     linereader::LineReader,
     std::{
@@ -53,7 +53,6 @@ pub(crate) fn spawn_workers(
                 // Hot loop
                 while let Some(channel) = rx_builder.iter().next() {
                     for output in channel.iter() {
-                        trace!("before writing: {:?}", &output);
                         write_formatted_output(&mut writer, output, opts.format())?;
                     }
                     debug!("Write channel closing");
@@ -62,8 +61,8 @@ pub(crate) fn spawn_workers(
             };
             // Cleanup
             match result() {
-                Ok(_) => match_with_log!(Ok(()), info!("Writer closing... success")),
-                Err(e) => match_with_log!(Err(e), warn!("Writer closing... with error")),
+                Ok(_) => with_log!(Ok(()), info!("Writer closing... success")),
+                Err(e) => with_log!(Err(e), warn!("Writer closing... with error")),
             }
         })?;
 
@@ -80,17 +79,13 @@ pub(crate) fn spawn_workers(
                 while let Some(channel) = rx_reader.iter().next() {
                     let (data_tx, data_rx): (SyncSender<ToWriter>, Receiver<ToWriter>) =
                         syncQueue(10);
-                    tx_writer.send(data_rx).map_err(|_| {
-                        ErrorKind::UnexpectedChannelClose(format!(
-                            "failed to send next |builder -> writer| channel, writer has hung up"
-                        ))
-                    })?;
+                    tx_writer.send(data_rx).context(Context::umcc("Writer"))?;
 
                     for packet in channel.iter() {
                         trace!(
-                            "current packet is: {}, {:?}, {:?}",
+                            "Current packet is: {}, {}, {:?}",
                             &packet.0.or_display("untracked"),
-                            &packet.1,
+                            &packet.1.or_display("untracked"),
                             packet
                                 .2
                                 .as_ref()
@@ -109,12 +104,8 @@ pub(crate) fn spawn_workers(
                             })
                             .filter_map(|output| output.check(opts.regex()))
                         {
-                            trace!("current in-processing output item is: {:?}", &item);
-                            data_tx.send(item.done()).map_err(|_| {
-                                ErrorKind::UnexpectedChannelClose(format!(
-                                    "writer in |builder -> writer| channel has hung up"
-                                ))
-                            })?;
+                            trace!("Current in-processing output item is: {:?}", &item);
+                            data_tx.send(item.done()).context(Context::udcc())?;
                         }
                         trace!("Finished processing a json pointer");
                     }
@@ -130,7 +121,7 @@ pub(crate) fn spawn_workers(
                         .join()
                         .map(|inner| {
                             inner.map_err(|err| {
-                                match_with_log!(
+                                with_log!(
                                     err,
                                     warn!("Builder closing... with error(s) propagated by Writer")
                                 )
@@ -138,137 +129,125 @@ pub(crate) fn spawn_workers(
                         })
                         .map_err(|_| {
                             warn!("Builder closing... with error");
-                            ErrorKind::ThreadFailed(format!(
-                                "{}",
-                                std::thread::current().name().unwrap_or("unnamed")
-                            ))
-                        })??;
+                            ErrorKind::ThreadFailed
+                        })
+                        .context(Context::tp("Writer"))??;
                     match defer {
-                        Ok(_) => match_with_log!(Ok(()), info!("Builder closing... success")),
-                        Err(e) => match_with_log!(Err(e), warn!("Builder closing... with error")),
+                        Ok(_) => with_log!(Ok(()), info!("Builder closing... success")),
+                        Err(e) => with_log!(Err(e), warn!("Builder closing... with error")),
                     }
                 }
             }
         })?;
 
     // Reader
-    let thReader: JoinHandle<Result<()>> = Thread::new()
-        .name(format!("Reader"))
-        .spawn(move || -> Result<()> {
-            debug!("Reader initialized");
-            let tx_builder = ReBu_tx;
-            let opts = &opts;
+    let thReader: JoinHandle<Result<()>> =
+        Thread::new()
+            .name(format!("Reader"))
+            .spawn(move || -> Result<()> {
+                debug!("Reader initialized");
+                let tx_builder = ReBu_tx;
+                let opts = &opts;
 
-            let result = || -> Result<()> {
-                let iter = eval(&Field::Identifier, lazy_eval, &from_source);
-                // Hot loop
-                for item in iter {
-                    let (data_tx, data_rx): (SyncSender<ToBuilder>, Receiver<ToBuilder>) =
-                        syncQueue(10);
-                    tx_builder.send(data_rx).map_err(|_| {
-                        ErrorKind::UnexpectedChannelClose(format!(
-                            "failed to send next |reader -> builder| channel, builder has hung up"
-                        ))
-                    })?;
-                    match (item, opts.by_line()) {
-                        ((i, read @ ReadKind::Stdin(_)), true) => {
-                            let mut line_reader = LineReader::with_delimiter_and_capacity(
-                                opts.linereader_eol(),
-                                opts.input_buffer_size(),
-                                read.into_inner(),
-                            );
-                            let mut index = i.as_ref().map(|_| 1);
-                            while let Some(slice) = line_reader.next_line().map(|res| {
-                                if opts.should_calculate(Field::Value) {
-                                    Some(res)
-                                } else {
-                                    None
-                                }
-                            }) {
-                                if check_index(opts.regex(), index) {
-                                    debug!(
-                                        "Processing line {} of input {}...",
-                                        index.or_display("untracked"),
-                                        i.or_display("untracked")
-                                    );
-                                    let reader =
-                                        slice.transpose()?.map(|s| s.iter().map(|&b| Ok(b)));
-                                    unwind_json(&opts, index, reader, data_tx.clone())?;
-                                    index = index.map(|i| i + 1);
-                                } else {
-                                    debug!(
-                                        "Skipping line {} of input {}...",
-                                        index.or_display("untracked"),
-                                        i.or_display("untracked")
-                                    );
-                                    index = index.map(|i| i + 1);
-                                }
-                            }
-                        }
-                        ((index, read), _) => {
-                            if check_index(opts.regex(), index) {
-                                warn!("In non --lines part");
-                                debug!("Processing input {}...", index.or_display("untracked"));
-                                let reader = eval(
-                                    &Field::Value,
-                                    |b, (cap, read)| {
-                                        if b {
-                                            Some(BufReader::with_capacity(cap, read).bytes())
-                                        } else {
-                                            None
-                                        }
-                                    },
-                                    (opts.input_buffer_size(), read.into_inner()),
+                let result = || -> Result<()> {
+                    let iter = eval(&Field::Identifier, lazy_eval_ident, &from_source);
+                    // Hot loop
+                    for item in iter {
+                        let (data_tx, data_rx): (SyncSender<ToBuilder>, Receiver<ToBuilder>) =
+                            syncQueue(10);
+                        tx_builder.send(data_rx).context(Context::umcc("Builder"))?;
+                        match (item, opts.by_line()) {
+                            ((i, read @ ReadKind::Stdin(_)), true) => {
+                                let mut line_reader = LineReader::with_delimiter_and_capacity(
+                                    opts.linereader_eol(),
+                                    opts.input_buffer_size(),
+                                    read.into_inner(),
                                 );
-                                unwind_json(&opts, index, reader, data_tx)?;
-                            } else {
-                                debug!("Skipping input {}...", index.or_display("untracked"));
+                                let mut index = i.as_ref().map(|_| 1);
+                                while let Some(slice) = line_reader.next_line().map(|res| {
+                                    if opts.should_calculate(Field::Value) {
+                                        Some(res)
+                                    } else {
+                                        None
+                                    }
+                                }) {
+                                    if check_index(opts.regex(), index) {
+                                        debug!(
+                                            "Processing line {} of input {}...",
+                                            index.or_display("untracked"),
+                                            i.or_display("untracked")
+                                        );
+                                        let reader =
+                                            slice.transpose()?.map(|s| s.iter().map(|&b| Ok(b)));
+                                        unwind_json(&opts, index, reader, data_tx.clone())?;
+                                        index = index.map(|i| i + 1);
+                                    } else {
+                                        debug!(
+                                            "Skipping line {} of input {}...",
+                                            index.or_display("untracked"),
+                                            i.or_display("untracked")
+                                        );
+                                        index = index.map(|i| i + 1);
+                                    }
+                                }
+                            }
+                            ((index, read), _) => {
+                                if check_index(opts.regex(), index) {
+                                    debug!("Processing input {}...", index.or_display("untracked"));
+                                    let reader = eval(
+                                        &Field::Value,
+                                        |b, (cap, read)| {
+                                            if b {
+                                                Some(BufReader::with_capacity(cap, read).bytes())
+                                            } else {
+                                                None
+                                            }
+                                        },
+                                        (opts.input_buffer_size(), read.into_inner()),
+                                    );
+                                    unwind_json(&opts, index, reader, data_tx)?;
+                                } else {
+                                    debug!("Skipping input {}...", index.or_display("untracked"));
+                                }
                             }
                         }
                     }
-                }
 
-                Ok(())
-            };
-            // Cleanup
-            match result() {
-                defer => {
-                    drop(tx_builder);
-                    thBuilder
-                        .join()
-                        .map(|inner| {
-                            inner.map_err(|err| {
-                                match_with_log!(
-                                    err,
-                                    warn!("Reader closing... with error(s) propagated by Builder")
-                                )
+                    Ok(())
+                };
+                // Cleanup
+                match result() {
+                    defer => {
+                        drop(tx_builder);
+                        thBuilder
+                            .join()
+                            .map(|inner| {
+                                inner.map_err(|err| {
+                                    with_log!(
+                                        err,
+                                        warn!(
+                                            "Reader closing... with error(s) propagated by Builder"
+                                        )
+                                    )
+                                })
                             })
-                        })
-                        .map_err(|_| {
-                            warn!("Reader closing... with error");
-                            ErrorKind::ThreadFailed(format!(
-                                "{}",
-                                std::thread::current().name().unwrap_or("unnamed")
-                            ))
-                        })??;
-                    match defer {
-                        Ok(_) => match_with_log!(Ok(()), info!("Reader closing... success")),
-                        Err(e) => match_with_log!(Err(e), warn!("Reader closing... with error")),
+                            .map_err(|_| {
+                                warn!("Reader closing... with error");
+                                ErrorKind::ThreadFailed
+                            })
+                            .context(Context::tp("Builder"))??;
+                        match defer {
+                            Ok(_) => with_log!(Ok(()), info!("Reader closing... success")),
+                            Err(e) => with_log!(Err(e), warn!("Reader closing... with error")),
+                        }
                     }
                 }
-            }
-        })
-        .map_err(|_| {
-            ErrorKind::ThreadFailed(format!(
-                "{}",
-                std::thread::current().name().unwrap_or("unnamed")
-            ))
-        })?;
+            })?;
 
     Ok(thReader)
 }
 
-fn lazy_eval(
+fn lazy_eval_ident(
     b: bool,
     src: &Receiver<ReadKind>,
 ) -> impl Iterator<Item = (Option<usize>, ReadKind)> + '_ {

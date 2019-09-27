@@ -4,7 +4,8 @@ use {
         models::{
             block::{Identifier, JType, JmesPath, JsonPointer, JsonValue},
             builder::OutputBuilder,
-            error::ErrorKind,
+            error::{Context, ErrContext, Error},
+            eval_raw,
             field::Field,
             pointer::{Pointer, PointerKind, PointerParts},
         },
@@ -28,7 +29,7 @@ use {
 
 /// Convenience macro for logging match arms
 #[macro_export]
-macro_rules! match_with_log {
+macro_rules! with_log {
     ( $val:expr, $log:expr) => {{
         $log;
         $val
@@ -323,14 +324,13 @@ impl JsonPacket {
 }
 
 impl TryFrom<(Option<Identifier>, Option<PointerKind>, Option<Vec<u8>>)> for JsonPacket {
-    type Error = ErrorKind;
+    type Error = Error;
 
     fn try_from(
         packet: (Option<Identifier>, Option<PointerKind>, Option<Vec<u8>>),
     ) -> std::result::Result<Self, Self::Error> {
         trace!(
-            "trying to convert: {:?} {:?}",
-            &packet.1,
+            "trying to convert: {:?}",
             packet
                 .2
                 .as_ref()
@@ -339,7 +339,12 @@ impl TryFrom<(Option<Identifier>, Option<PointerKind>, Option<Vec<u8>>)> for Jso
         );
         let json: Option<Json> = packet
             .2
-            .map(|data| from_slice(data.as_slice()))
+            .map(|data| {
+                from_slice(data.as_slice()).context(Context::dlelbl(eval_raw(
+                    |opts, len| (opts.input_buffer_size() >= len, len),
+                    data.len(),
+                )))
+            })
             .transpose()?;
 
         Ok(JsonPacket {
