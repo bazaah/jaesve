@@ -9,6 +9,7 @@ use {
         cli::{generate_cli, ProgramArgs},
         models::{
             assets::ReadKind,
+            error::Result,
             error::{ErrorKind, ProgramExit},
             initialize_logging, set_reader,
         },
@@ -36,7 +37,7 @@ fn main() {
     ProgramExit::from(try_main()).exit()
 }
 
-fn try_main() -> Result<(), ErrorKind> {
+fn try_main() -> Result<()> {
     // Channel for sending open input streams (stdin/file handles)
     // number controls how many shall be open at any given time,
     // counting from 0 (i.e: 0 -> 1, 1 -> 2, etc)

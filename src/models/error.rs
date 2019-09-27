@@ -1,11 +1,41 @@
 use std::{error, fmt::Debug, io::Error as ioError, process::exit, str::Utf8Error};
 
-pub(crate) type Result<T> = std::result::Result<T, ErrorKind>;
+pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
-struct Error {
+pub struct Error {
     kind: ErrorKind,
     context: Option<Context>,
+}
+
+// 1 => Program failed to correctly execute
+// 2 => Thread panicked, potentially leaving OS resources in a dirty state
+// 3 => Program partially parsed data but was closed unexpectedly
+impl From<Error> for i32 {
+    fn from(err: Error) -> Self {
+        match err.kind {
+            ErrorKind::ThreadFailed(_) => 2,
+            ErrorKind::UnexpectedChannelClose(_) => 3,
+            _ => 1,
+        }
+    }
+}
+
+impl Error {
+    fn display_with_context(
+        err: &ErrorKind,
+        con: &Context,
+        f: &mut std::fmt::Formatter,
+    ) -> std::fmt::Result {
+        type E = ErrorKind;
+        type C = Context;
+        match (err, con) {
+            (E::Io(e), C::DataLenEqualLineBufferLen(s)) => {
+                write!(f, "Input data size is >= input buffer, which likely lead to this error. Input buffer size is adjustable, try adding 'config --buf_in {}' (error: {})", s, e)
+            }
+            (e, _) => write!(f, "{}", e)
+        }
+    }
 }
 
 impl<E, C> From<(E, C)> for Error
@@ -21,16 +51,38 @@ where
     }
 }
 
-impl From<ErrorKind> for Error {
-    fn from(kind: ErrorKind) -> Self {
-        Error { kind, context: None }
+impl<E> From<E> for Error
+where
+    E: Into<ErrorKind>,
+{
+    fn from(err: E) -> Self {
+        Error {
+            kind: err.into(),
+            context: None,
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        self.kind.source()
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.context
+            .as_ref()
+            .map_or(write!(f, "{}", self.kind), |con| {
+                Error::display_with_context(&self.kind, con, f)
+            })
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Context {
+pub enum Context {
     Overide(String),
-    DataLenEqualLineBuffer
+    DataLenEqualLineBufferLen(usize),
 }
 
 impl<T: AsRef<str>> From<T> for Context {
@@ -55,19 +107,6 @@ pub enum ErrorKind {
     UTF8(Utf8Error),
     // Handles missing fields during output streaming
     MissingField(String),
-}
-
-// 1 => Program failed to correctly execute
-// 2 => Thread panicked, potentially leaving OS resources in a dirty state
-// 3 => Program partially parsed data but was closed unexpectedly
-impl From<ErrorKind> for i32 {
-    fn from(err: ErrorKind) -> Self {
-        match err {
-            ErrorKind::ThreadFailed(_) => 2,
-            ErrorKind::UnexpectedChannelClose(_) => 3,
-            _ => 1,
-        }
-    }
 }
 
 // IO Error => ErrorKind
@@ -169,7 +208,7 @@ where
     }
 }
 
-impl From<Result<()>> for ProgramExit<ErrorKind> {
+impl From<Result<()>> for ProgramExit<Error> {
     fn from(res: Result<()>) -> Self {
         match res {
             Ok(_) => ProgramExit::Success,

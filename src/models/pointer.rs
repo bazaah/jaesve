@@ -53,7 +53,10 @@ impl Pointer for PointerKind {
 
     fn as_parts(&self) -> Result<&Vec<PointerParts>> {
         match self {
-            Self::Simple(_) => Err(ErrorKind::Message(format!("yada"))),
+            Self::Simple(_) => Err(ErrorKind::Message(format!(
+                "Logic error: called 'as_parts' on Simple, this is a bug"
+            ))
+            .into()),
             Self::Complex(c) => Ok(&c.inner),
         }
     }
