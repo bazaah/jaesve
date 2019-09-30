@@ -45,6 +45,16 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
         .arg(Arg::with_name("line")
             .short("l")
             .long("line")
+            .takes_value(true)
+            .default_value("0")
+            .value_name("UINT")
+            .validator(|s| match s {
+                ref s => match s.parse::<usize>() {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(format!("Couldn't parse '{}' into a uint: {}", s, e))
+                    }
+                }
+            )
             .help("Set stdin to read a JSON doc from each line")
         )
         .arg(Arg::with_name("append")
@@ -257,7 +267,7 @@ pub struct ProgramArgs {
     delimiter: Delimiter,
     guard: Guard,
     debug_level: LevelFilter,
-    by_line: bool,
+    by_line: (bool, usize),
     regex: Option<RegexOptions>,
     format: Vec<Field>,
     reader: Vec<Option<ReadFrom>>,
@@ -321,7 +331,11 @@ impl<'a, 'b> ProgramArgs {
                 (None, _) => None,
             };
 
-        let by_line = store.is_present("line");
+        let by_line = match (store.occurrences_of("line"), store.value_of("line")) {
+            (0, Some(num)) => (false, num.parse::<usize>().unwrap()),
+            (_, Some(num)) => (true, num.parse::<usize>().unwrap()),
+            (_, _) => unreachable!("Start from line default should be set by clap"),
+        };
 
         let delimiter: Delimiter = match store.value_of("delimiter") {
             Some(s) => s.into(),
@@ -392,7 +406,11 @@ impl<'a, 'b> ProgramArgs {
     }
 
     pub fn by_line(&self) -> bool {
-        self.by_line
+        self.by_line.0
+    }
+
+    pub fn line_start_number(&self) -> usize {
+        self.by_line.1
     }
 
     pub fn delimiter(&self) -> Delimiter {

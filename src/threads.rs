@@ -164,6 +164,8 @@ pub(crate) fn spawn_workers(
                                     read.into_inner(),
                                 );
                                 let mut index = i.as_ref().map(|_| 1);
+                                // Note that this is an Option inside an Option... the outside option controls when the loop should end (i.e EOF),
+                                // the inside option controls whether to store the data
                                 while let Some(slice) = line_reader.next_line().map(|res| {
                                     if opts.should_calculate(Field::Value) {
                                         Some(res)
@@ -171,7 +173,11 @@ pub(crate) fn spawn_workers(
                                         None
                                     }
                                 }) {
-                                    if check_index(opts.regex(), index) {
+                                    if check_index(opts.regex(), index)
+                                        && index
+                                            .as_ref()
+                                            .map_or(true, |i| i >= &opts.line_start_number())
+                                    {
                                         debug!(
                                             "Processing line {} of input {}...",
                                             index.or_display("untracked"),
