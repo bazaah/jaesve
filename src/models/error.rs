@@ -120,12 +120,8 @@ impl Context {
     }
 
     /// DataLenEqualLineBufferLen
-    pub fn dlelbl((greater_or_equal, len): (bool, usize)) -> Option<Self> {
-        if greater_or_equal {
-            Some(Context::DataLenEqualLineBufferLen(len))
-        } else {
-            None
-        }
+    pub fn dlelbl(data_len: usize) -> Option<Self> {
+        Some(Context::DataLenEqualLineBufferLen(data_len))
     }
 }
 

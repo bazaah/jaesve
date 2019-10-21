@@ -9,6 +9,7 @@ use {
             field::Field,
             pointer::{Pointer, PointerKind, PointerParts},
         },
+        CLI,
     },
     serde_json::{
         from_slice, Value as Json,
@@ -20,6 +21,7 @@ use {
     std::{
         collections::VecDeque,
         convert::TryFrom,
+        fmt,
         fs::File,
         io::{Read as ioRead, Stdin},
         path::PathBuf,
@@ -331,19 +333,16 @@ impl TryFrom<(Option<Identifier>, Option<PointerKind>, Option<Vec<u8>>)> for Jso
     ) -> std::result::Result<Self, Self::Error> {
         trace!(
             "trying to convert: {:?}",
-            packet
-                .2
-                .as_ref()
-                .map(|vec| from_utf8(vec))
-                .or_display("untracked")
+            packet.2.as_ref().map(|vec| from_utf8(vec)).or_untracked()
         );
         let json: Option<Json> = packet
             .2
             .map(|data| {
-                from_slice(data.as_slice()).context(Context::dlelbl(eval_raw(
-                    |opts, len| (opts.input_buffer_size() >= len, len),
-                    data.len(),
-                )))
+                from_slice(data.as_slice()).context(
+                    Some(data.len())
+                        .filter(|l| *l >= CLI.input_buffer_size())
+                        .map(|l| Context::DataLenEqualLineBufferLen(l)),
+                )
             })
             .transpose()?;
 
@@ -390,31 +389,84 @@ where
 
 pub trait OrDisplay {
     type Item: std::fmt::Debug;
-    fn or_display<'a, 'b>(&'a self, fallback: &'b str) -> FmtNone<'a, 'b, Self::Item>;
+    fn or_display<'a, 'b>(&'a self, fallback: &'b str) -> NoneFallback<'a, 'b, Self::Item>;
+    fn or_untracked<'a>(&'a self) -> NoneDefault<'a, Self::Item>;
 }
 
-impl<T: std::fmt::Debug> OrDisplay for Option<T> {
+impl<T> OrDisplay for Option<T>
+where
+    T: std::fmt::Debug,
+{
     type Item = T;
-    fn or_display<'a, 'b>(&'a self, fallback: &'b str) -> FmtNone<'a, 'b, T> {
-        self.as_ref().map_or(FmtNone::from(None, fallback), |val| {
-            FmtNone::from(Some(val), "")
-        })
+    fn or_display<'a, 'b>(&'a self, fallback: &'b str) -> NoneFallback<'a, 'b, T> {
+        self.as_ref()
+            .map_or(NoneFallback::from(None, fallback), |val| {
+                NoneFallback::from(Some(val), "")
+            })
+    }
+
+    fn or_untracked<'a>(&'a self) -> NoneDefault<'a, T> {
+        NoneDefault::from(self.as_ref())
     }
 }
 
-pub struct FmtNone<'a, 'b, T: std::fmt::Debug> {
+pub struct NoneDefault<'a, T: fmt::Debug>(Option<&'a T>);
+
+impl<'a, T> NoneDefault<'a, T>
+where
+    T: fmt::Debug,
+{
+    fn from(inner: Option<&'a T>) -> Self {
+        NoneDefault(inner)
+    }
+}
+
+impl<'a, T> fmt::Debug for NoneDefault<'a, T>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(val) => write!(f, "{:?}", val),
+            None => write!(f, "untracked"),
+        }
+    }
+}
+
+impl<'a, T> fmt::Display for NoneDefault<'a, T>
+where
+    T: fmt::Debug + fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(val) => write!(f, "{}", val),
+            None => write!(f, "untracked"),
+        }
+    }
+}
+
+pub struct NoneFallback<'a, 'b, T>
+where
+    T: fmt::Debug,
+{
     inner: Option<&'a T>,
     or_else: &'b str,
 }
 
-impl<'a, 'b, T: std::fmt::Debug> FmtNone<'a, 'b, T> {
+impl<'a, 'b, T> NoneFallback<'a, 'b, T>
+where
+    T: fmt::Debug,
+{
     fn from(inner: Option<&'a T>, or_else: &'b str) -> Self {
-        FmtNone { inner, or_else }
+        NoneFallback { inner, or_else }
     }
 }
 
-impl<'a, 'b, T: std::fmt::Debug> std::fmt::Debug for FmtNone<'a, 'b, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'a, 'b, T> fmt::Debug for NoneFallback<'a, 'b, T>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.inner {
             Some(val) => write!(f, "{:?}", val),
             None => write!(f, "{}", self.or_else),
@@ -422,10 +474,13 @@ impl<'a, 'b, T: std::fmt::Debug> std::fmt::Debug for FmtNone<'a, 'b, T> {
     }
 }
 
-impl<'a, 'b, T: std::fmt::Debug> std::fmt::Display for FmtNone<'a, 'b, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl<'a, 'b, T> fmt::Display for NoneFallback<'a, 'b, T>
+where
+    T: fmt::Debug + fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.inner {
-            Some(val) => write!(f, "{:?}", val),
+            Some(val) => write!(f, "{}", val),
             None => write!(f, "{}", self.or_else),
         }
     }
