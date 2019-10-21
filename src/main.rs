@@ -45,7 +45,7 @@ fn try_main() -> Result<()> {
         syncQueue(CLI.input_file_handles_max());
 
     // Instantiates worker threads
-    let reader = spawn_workers(&CLI, rx)?;
+    let reader = spawn_workers(rx)?;
 
     // Hot loop
     for source in CLI.reader_list() {
