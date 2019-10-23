@@ -1,17 +1,23 @@
 #![allow(deprecated)]
 use {
+    self::{
+        config::{finalize_args, ConfigMerge, ProtoArgs},
+        deptree::DependencyTree,
+    },
     crate::models::{
         assets::{ReadFrom, RegexOptions},
         block::{Delimiter, Guard},
-        error::ErrorKind,
+        error::Result,
         field::Field,
-        get_reader,
     },
     clap::{crate_authors, crate_version, App, Arg, ArgMatches as Matches, SubCommand},
     regex::Regex,
     simplelog::LevelFilter,
     std::collections::{HashMap, HashSet},
 };
+
+mod config;
+mod deptree;
 
 // Subset of all Field variants that can be used for valuable output
 const VALID_FIELDS: [Field; 5] = [
@@ -42,6 +48,13 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
                 .takes_value(false)
                 .help("Silences error messages")
         )
+        .arg(Arg::with_name("append")
+                .short("a")
+                .long("append")
+                .takes_value(false)
+                .help("Append to output file, instead of overwriting")
+                .long_help("Append to output file, instead of overwriting... has no effect if writing to stdout")
+        )
         .arg(Arg::with_name("line")
             .short("l")
             .long("line")
@@ -56,13 +69,6 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
                 }
             )
             .help("Set stdin to read a JSON doc from each line")
-        )
-        .arg(Arg::with_name("append")
-                .short("a")
-                .long("append")
-                .takes_value(false)
-                .help("Append to output file, instead of overwriting")
-                .long_help("Append to output file, instead of overwriting... has no effect if writing to stdout")
         )
         .arg(
             Arg::with_name("delimiter")
@@ -140,7 +146,7 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
                 // TODO: Figure out to pass &str made from Fields
                 .default_value("ident.jptr.type.value")
                 .validator(|fmt| {
-                    let res: Result<Vec<_>, _> = fmt.split('.').map(|sub| try_from_alias(sub)
+                    let res: Result<Vec<_>> = fmt.split('.').map(|sub| Field::try_from_whitelist(sub, &VALID_FIELDS).map(|_| ())
                     ).collect();
                     match res {
                         Ok(_) => Ok(()),
@@ -278,75 +284,28 @@ pub struct ProgramArgs {
 
 impl<'a, 'b> ProgramArgs {
     pub fn init(cli: App<'a, 'b>) -> Self {
-        let store = cli.get_matches();
+        let store = &cli.get_matches();
 
+        // Early exit if completions are called
         ProgramArgs::if_completions_exit(store.subcommand_matches("completions"));
-        let debug_level = match (store.occurrences_of("verbosity"), store.is_present("quiet")) {
-            (_, true) => LevelFilter::Off,
-            (0, false) => LevelFilter::Warn,
-            (1, false) => LevelFilter::Info,
-            (2, false) => LevelFilter::Debug,
-            (_, false) => LevelFilter::Trace,
-        };
 
-        let reader = match store.values_of("input") {
-            Some(inputs) => inputs
-                .scan(false, |acc, item| match item {
-                    "-" if *acc => Some((*acc, item)),
-                    "-" => {
-                        *acc = true;
-                        Some((false, item))
-                    }
-                    _ => Some((false, item)),
-                })
-                .filter(|(dupe, _)| !dupe)
-                .map(|(_, s)| get_reader(Some(s)))
-                .collect::<Vec<Option<ReadFrom>>>(),
-            None => {
-                let mut vec: Vec<Option<ReadFrom>> = Vec::new();
-                let i = get_reader(None);
-                vec.push(i);
-                vec
-            }
-        };
+        let mut proto = ProtoArgs::new(finalize_args::<&str>(&[]));
 
-        let writer = match (store.value_of("output"), store.is_present("append")) {
-            (Some(s), false) => (Some(s.to_string()), false),
-            (Some(s), true) => (Some(s.to_string()), true),
-            (None, _) => (None, false),
-        };
+        let debug_level = proto.debug_level(store);
 
-        // Unwrap is safe because of default value set + validated by clap
-        let format_str = store.value_of("format").unwrap();
-        let format: Vec<Field> = if format_str.contains("all") {
-            VALID_FIELDS.iter().copied().collect()
-        } else {
-            format_str.split('.').map(Field::from).collect()
-        };
+        let reader = proto.reader(store);
 
-        let regex: Option<RegexOptions> =
-            match (store.value_of("regex"), store.value_of("regex_column")) {
-                (Some(pattern), Some(column)) => Some(RegexOptions::new(pattern, column.into())),
-                (Some(_), None) => unreachable!("Column default value should be supplied by clap"),
-                (None, _) => None,
-            };
+        let writer = proto.writer(store);
 
-        let by_line = match (store.occurrences_of("line"), store.value_of("line")) {
-            (0, Some(num)) => (false, num.parse::<usize>().unwrap()),
-            (_, Some(num)) => (true, num.parse::<usize>().unwrap()),
-            (_, _) => unreachable!("Start from line default should be set by clap"),
-        };
+        let format = proto.format(store);
 
-        let delimiter: Delimiter = match store.value_of("delimiter") {
-            Some(s) => s.into(),
-            _ => panic!("delimiter missing"),
-        };
+        let regex = proto.regex(store);
 
-        let guard: Guard = match store.value_of("guard") {
-            Some(s) if s.is_empty() => Guard::None,
-            Some(c) => Guard::Some(c.parse::<char>().unwrap()),
-            None => unreachable!("Default value should be supplied by clap"),
-        };
+        let by_line = proto.by_line(store);
+
+        let delimiter = proto.delimiter(store);
+
+        let guard: Guard = proto.guard(store);
 
         let dependency_map = DependencyTree::init().generate_list(match format.len() {
             0 => unreachable!("Clap should validate output fields >= 1"),
@@ -377,7 +336,8 @@ impl<'a, 'b> ProgramArgs {
                 .collect::<Vec<Field>>(),
         });
 
-        let subcommand_config = SubConfig::from_matches(store.subcommand_matches("config"));
+        let subcommand_config =
+            SubConfig::from_matches(store.subcommand_matches("config"), &mut proto);
 
         Self {
             delimiter,
@@ -512,7 +472,10 @@ struct SubConfig {
 }
 
 impl SubConfig {
-    pub fn from_matches<'a>(substore: Option<&Matches<'a>>) -> Self {
+    pub fn from_matches<'a, T>(substore: Option<&Matches<'a>>, proto: &mut ProtoArgs<T>) -> Self
+    where
+        T: ConfigMerge,
+    {
         match substore {
             Some(substore) => {
                 let logger = substore.values_of("logger_output").map(|args| {
@@ -537,23 +500,9 @@ impl SubConfig {
                     .unwrap()
                     .parse::<usize>()
                     .unwrap();
-                let output_buffer_size = substore
-                    .value_of("output_buffer_size")
-                    .unwrap()
-                    .parse::<usize>()
-                    .unwrap()
-                    * multi;
-                let input_buffer_size = substore
-                    .value_of("input_buffer_size")
-                    .unwrap()
-                    .parse::<usize>()
-                    .unwrap()
-                    * multi;
-                let linereader_eol = substore
-                    .value_of("eol_char_linereader")
-                    .unwrap()
-                    .parse::<char>()
-                    .unwrap() as u8;
+                let output_buffer_size = proto.output_buffer_size(substore) * multi;
+                let input_buffer_size = proto.input_buffer_size(substore) * multi;
+                let linereader_eol = proto.linereader_eol(substore);
 
                 SubConfig {
                     logger,
@@ -578,88 +527,6 @@ impl Default for SubConfig {
             input_buffer_size: 64 * 1024,
             linereader_eol: b'\n',
         }
-    }
-}
-
-const FIELDS: [Field; 7] = [
-    Field::Delimiter,
-    Field::Guard,
-    Field::Identifier,
-    Field::JmesPath,
-    Field::Pointer,
-    Field::Type,
-    Field::Value,
-];
-
-/// There are two variants of dependency that need to be mapped:
-/// 1. Needs to be calculated
-/// 2. Needs to be stored (which implies 1)
-///
-/// In the absence of a better idea, I currently store them as HashMap<Field, bool>
-/// Thus if a field exists in the map it is at least 1, if its value is true it is also 2
-struct DependencyTree {
-    /// Field and its dependencies, if any
-    map: HashMap<Field, Option<Vec<Field>>>,
-}
-
-impl DependencyTree {
-    /// Initialize the base relations between Fields
-    fn init() -> Self {
-        let mut map = HashMap::with_capacity(FIELDS.len());
-        FIELDS
-            .iter()
-            .map(|field| match field {
-                f @ Field::Delimiter => (f, None),
-                f @ Field::Guard => (f, None),
-                f @ Field::Identifier => (f, Some(vec![Field::Guard, Field::Delimiter])),
-                f @ Field::JmesPath => (f, Some(vec![Field::Pointer])),
-                f @ Field::Pointer => (f, Some(vec![Field::Value])),
-                f @ Field::Type => (f, Some(vec![Field::Value])),
-                f @ Field::Value => (f, Some(vec![Field::Guard, Field::Delimiter])),
-            })
-            .for_each(|(field, dependencies)| {
-                map.insert(*field, dependencies);
-            });
-        DependencyTree { map }
-    }
-    /// Generate a dependency map, used for determining what work this instance of the program needs to do
-    fn generate_list<F: AsRef<[Field]>>(&self, relevant: F) -> HashMap<Field, bool> {
-        let mut set = HashMap::<Field, bool>::with_capacity(FIELDS.len());
-        // Populate the dependency map with with all secondary Fields
-        relevant
-            .as_ref()
-            .iter()
-            .scan(Vec::<(Field, bool)>::new(), |buffer, field| {
-                match self.map.get(field).unwrap() {
-                    Some(deps) => buffer.extend(deps.iter().map(|f| (*f, false))),
-                    None => {}
-                }
-
-                buffer.pop()
-            })
-            .for_each(|(field, is_output)| {
-                set.entry(field).or_insert(is_output);
-            });
-        // Populate the dependency map with the primary Fields, overwriting secondary values
-        relevant
-            .as_ref()
-            .iter()
-            .map(|field| (*field, true))
-            .for_each(|(field, is_output)| {
-                set.insert(field, is_output);
-            });
-
-        set
-    }
-}
-
-/// Wrapper function to allow me some additional format 'aliases'
-// That this function exists might indicate an abstraction issue
-// TODO: investigate the above
-fn try_from_alias(sub: &str) -> Result<(), ErrorKind> {
-    match sub {
-        "all" => Ok(()),
-        s => Field::try_from_whitelist(s, &VALID_FIELDS).map(|_| ()),
     }
 }
 
