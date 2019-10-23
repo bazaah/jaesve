@@ -13,6 +13,9 @@ use {
     },
 };
 
+#[cfg(feature = "config-file")]
+use serde::Deserialize;
+
 /// Enum containing every valid output kind
 /// used by OutputBuilder / Output
 #[derive(Debug, Clone)]
@@ -224,6 +227,7 @@ impl std::fmt::Display for JsonValue {
 /// output delimiters, avoids locking the delimiter
 /// to a single char, and avoids unnecessary
 /// cloning on a single char
+#[cfg_attr(feature = "config-file", derive(Deserialize))]
 #[derive(Debug)]
 pub enum Delimiter {
     Char(char),
@@ -290,6 +294,7 @@ impl Default for Delimiter {
 /// Type 'char' wrapper specialized for
 /// output field guards, allowing for
 /// no guard or 1 guard char
+#[cfg_attr(feature = "config-file", derive(Deserialize))]
 #[derive(Debug, Clone, Copy)]
 pub enum Guard {
     Some(char),

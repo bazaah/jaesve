@@ -5,7 +5,6 @@ use {
             block::{Identifier, JType, JmesPath, JsonPointer, JsonValue},
             builder::OutputBuilder,
             error::{Context, ErrContext, Error},
-            eval_raw,
             field::Field,
             pointer::{Pointer, PointerKind, PointerParts},
         },

@@ -1,11 +1,18 @@
 use {
-    crate::models::{assets::IdentifyFirstLast, block::BlockKind, error::ErrorKind},
+    crate::models::{
+        assets::IdentifyFirstLast,
+        block::BlockKind,
+        error::{ErrorKind, Result},
+    },
     std::{
         collections::{hash_map::RandomState, HashSet},
         fmt::Write as fmtWrite,
         iter::FromIterator,
     },
 };
+
+#[cfg(feature = "config-file")]
+use serde::Deserialize;
 
 /// Provides an bridge for moving from some kind of type to a BlockKind
 /// using a Field as a marker for which type belongs to which BlockKind
@@ -15,6 +22,7 @@ pub trait AsField: Into<BlockKind> {
 
 /// Functions as a cheap marker for representing
 /// an abstract BlockKind
+#[cfg_attr(feature = "config-file", derive(Deserialize))]
 #[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 pub enum Field {
     Identifier,
@@ -29,7 +37,7 @@ pub enum Field {
 impl Field {
     /// Associated fn emulating TryFrom, workaround
     /// for the annoying implicit impl deriving from From
-    pub fn try_from(s: &str) -> Result<Self, ErrorKind> {
+    pub fn try_from(s: &str) -> Result<Self> {
         match s {
             "ident" => Ok(Field::Identifier),
             "delim" => Ok(Field::Delimiter),
@@ -38,13 +46,13 @@ impl Field {
             "jptr" => Ok(Field::Pointer),
             "value" => Ok(Field::Value),
             "jmes" => Ok(Field::JmesPath),
-            _ => Err(ErrorKind::Message(format!("'{}' is not a valid field", s))),
+            _ => Err(ErrorKind::Message(format!("'{}' is not a valid field", s)).into()),
         }
     }
 
     /// Convenience wrapper around try_from, further
     /// restricting the cast to the allowed variants in whitelist
-    pub fn try_from_whitelist(s: &str, whitelist: &[Field]) -> Result<Self, ErrorKind> {
+    pub fn try_from_whitelist(s: &str, whitelist: &[Field]) -> Result<Self> {
         let res = Field::try_from(s)?;
 
         match HashSet::<&Field, RandomState>::from_iter(whitelist).contains(&res) {
@@ -53,12 +61,13 @@ impl Field {
                 "'{}' is not a valid field: {}",
                 s,
                 Field::print_slice(whitelist)?
-            ))),
+            ))
+            .into()),
         }
     }
 
     /// Private display impl to avoid unnecessary foreign wrappers
-    fn print_slice(slice: &[Field]) -> Result<String, ErrorKind> {
+    fn print_slice(slice: &[Field]) -> Result<String> {
         let mut buffer = String::with_capacity(slice.len() * 6);
         let iter = slice.iter().identify_first_last();
         for item in iter {

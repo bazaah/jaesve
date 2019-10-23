@@ -3,6 +3,9 @@ use std::{
     sync::mpsc::SendError,
 };
 
+#[cfg(feature = "config-file")]
+use toml::de::Error as TomlError;
+
 pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
@@ -165,6 +168,13 @@ impl From<serde_json::Error> for ErrorKind {
                 ErrorKind::Io(err.into())
             }
         }
+    }
+}
+
+#[cfg(feature = "config-file")]
+impl From<TomlError> for ErrorKind {
+    fn from(err: TomlError) -> Self {
+        ErrorKind::Io(err.into())
     }
 }
 
