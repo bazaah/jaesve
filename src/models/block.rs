@@ -310,6 +310,12 @@ impl Guard {
     }
 }
 
+impl From<&str> for Guard {
+    fn from(s: &str) -> Self {
+        Guard::new(s.chars().take(1).next())
+    }
+}
+
 impl std::fmt::Display for Guard {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
