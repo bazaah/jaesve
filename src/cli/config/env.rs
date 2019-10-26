@@ -97,10 +97,10 @@ impl EnvArgs {
                 .and_then(|s| log_err(s.parse::<usize>(), &s)),
             quiet: vars
                 .get(&Kind::Quiet)
-                .and_then(|s| log_err(s.parse::<bool>(), &s)),
+                .and_then(|s| log_err(parse_wide_bool(s), &s)),
             append: vars
                 .get(&Kind::Append)
-                .and_then(|s| log_err(s.parse::<bool>(), &s)),
+                .and_then(|s| log_err(parse_wide_bool(s), &s)),
             line: vars
                 .get(&Kind::Line)
                 .and_then(|s| log_err(s.parse::<usize>(), &s)),
@@ -185,9 +185,20 @@ impl ConfigMerge for EnvArgs {
     }
 }
 
-fn log_err<T, E: error::Error, S: AsRef<str>>(result: result::Result<T, E>, var: S) -> Option<T> {
+fn parse_wide_bool<S: AsRef<str>>(s: S) -> result::Result<bool, String> {
+    match s.as_ref().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "1" => Ok(true),
+        "false" | "no" | "0" => Ok(false),
+        _ => Err(format!("Unable to parse into a bool")),
+    }
+}
+
+fn log_err<T, E: std::fmt::Display, S: AsRef<str>>(
+    result: result::Result<T, E>,
+    var: S,
+) -> Option<T> {
     match result {
         Ok(val) => Some(val),
-        Err(e) => with_log!(None, debug!("Couldn't parse env {}: {}", var.as_ref(), e)),
+        Err(e) => with_log!(None, debug!("Couldn't parse env '{}': {}", var.as_ref(), e)),
     }
 }

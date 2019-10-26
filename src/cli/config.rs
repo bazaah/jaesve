@@ -24,8 +24,8 @@ mod merge;
 
 #[cfg(feature = "config-file")]
 pub(in crate::cli) fn finalize_args<P: AsRef<Path>>(extra: &[P]) -> EnvArgs {
-    let file_config = merge_config_files(extra);
     let mut env_config = EnvArgs::from_env();
+    let file_config = merge_config_files(extra);
 
     env_config.merge(file_config);
 
