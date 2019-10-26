@@ -294,7 +294,7 @@ impl Default for Delimiter {
 /// Type 'char' wrapper specialized for
 /// output field guards, allowing for
 /// no guard or 1 guard char
-#[cfg_attr(feature = "config-file", derive(Deserialize))]
+#[cfg_attr(feature = "config-file", derive(Deserialize), serde(from = "&str"))]
 #[derive(Debug, Clone, Copy)]
 pub enum Guard {
     Some(char),
