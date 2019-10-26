@@ -1,5 +1,5 @@
 use {
-    super::config::env::EnvArgs,
+    super::config::env::{Env, EnvArgs},
     crate::models::{
         assets::{ReadFrom, RegexOptions},
         block::{Delimiter, Guard},
@@ -24,7 +24,7 @@ mod merge;
 
 #[cfg(feature = "config-file")]
 pub(in crate::cli) fn finalize_args<P: AsRef<Path>>(extra: &[P]) -> EnvArgs {
-    let mut env_config = EnvArgs::from_env();
+    let mut env_config = Env::default().collect();
     let file_config = merge_config_files(extra);
 
     env_config.merge(file_config);
@@ -34,7 +34,7 @@ pub(in crate::cli) fn finalize_args<P: AsRef<Path>>(extra: &[P]) -> EnvArgs {
 
 #[cfg(not(feature = "config-file"))]
 pub(in crate::cli) fn finalize_args<P: AsRef<Path>>(_extra: &[P]) -> EnvArgs {
-    EnvArgs::from_env()
+    Env::default().collect()
 }
 
 pub(in crate::cli) struct ProtoArgs<T> {
