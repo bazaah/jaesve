@@ -12,21 +12,22 @@ use {
     std::{
         collections::HashMap,
         env::{var as get_env, VarError},
-        error, result,
+        ffi::OsStr,
+        result,
     },
 };
 
 const ENVIRONMENT_VARIABLES: [&str; 10] = [
-    "JSV_DEBUG",
-    "JSV_QUIET",
-    "JSV_APPEND",
-    "JSV_LINE",
-    "JSV_DELIM",
-    "JSV_GUARD",
-    "JSV_FORMAT",
-    "JSV_BUF_OUT",
-    "JSV_BUF_IN",
-    "JSV_LINEREADER_EOL",
+    "JAESVE_DEBUG",
+    "JAESVE_QUIET",
+    "JAESVE_APPEND",
+    "JAESVE_LINE",
+    "JAESVE_DELIM",
+    "JAESVE_GUARD",
+    "JAESVE_FORMAT",
+    "JAESVE_BUF_OUT",
+    "JAESVE_BUF_IN",
+    "JAESVE_LINEREADER_EOL",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,16 +47,16 @@ enum Kind {
 impl<S: AsRef<str>> From<S> for Kind {
     fn from(s: S) -> Self {
         match s.as_ref() {
-            "JSV_DEBUG" => Kind::Debug,
-            "JSV_QUIET" => Kind::Quiet,
-            "JSV_APPEND" => Kind::Append,
-            "JSV_LINE" => Kind::Line,
-            "JSV_DELIM" => Kind::Delim,
-            "JSV_GUARD" => Kind::Guard,
-            "JSV_FORMAT" => Kind::Format,
-            "JSV_BUF_OUT" => Kind::BufIn,
-            "JSV_BUF_IN" => Kind::BufOut,
-            "JSV_LINEREADER_EOL" => Kind::RdrEol,
+            "JAESVE_DEBUG" => Kind::Debug,
+            "JAESVE_QUIET" => Kind::Quiet,
+            "JAESVE_APPEND" => Kind::Append,
+            "JAESVE_LINE" => Kind::Line,
+            "JAESVE_DELIM" => Kind::Delim,
+            "JAESVE_GUARD" => Kind::Guard,
+            "JAESVE_FORMAT" => Kind::Format,
+            "JAESVE_BUF_OUT" => Kind::BufIn,
+            "JAESVE_BUF_IN" => Kind::BufOut,
+            "JAESVE_LINEREADER_EOL" => Kind::RdrEol,
             _ => panic!("Tried to convert bad &str to env Kind"),
         }
     }
@@ -76,10 +77,13 @@ pub(in crate::cli) struct EnvArgs {
 }
 
 impl EnvArgs {
-    pub(in crate::cli) fn from_env() -> Self {
+    fn get_args<F>(f: F) -> Self
+    where
+        F: Fn(&dyn AsRef<OsStr>) -> result::Result<String, VarError>,
+    {
         let vars: HashMap<Kind, String> = ENVIRONMENT_VARIABLES
             .iter()
-            .map(|s| (Kind::from(s), get_env(s)))
+            .map(|s| (Kind::from(s), f(s)))
             .filter_map(|(k, res)| match res {
                 Ok(s) => Some((k, s)),
                 Err(e) => match e {
@@ -201,4 +205,50 @@ fn log_err<T, E: std::fmt::Display, S: AsRef<str>>(
         Ok(val) => Some(val),
         Err(e) => with_log!(None, debug!("Couldn't parse env '{}': {}", var.as_ref(), e)),
     }
+}
+
+#[derive(Debug)]
+pub(in crate::cli) struct Env<E = Live> {
+    environment: E,
+}
+
+impl<E: FromEnv> Env<E> {
+    pub(in crate::cli) fn collect(self) -> EnvArgs {
+        EnvArgs::get_args(<E as FromEnv>::from_env)
+    }
+
+    fn with_environment(env: E) -> Self {
+        Env { environment: env }
+    }
+}
+
+impl Default for Env {
+    fn default() -> Self {
+        Env { environment: Live }
+    }
+}
+
+pub(in crate::cli) trait FromEnv {
+    fn from_env(key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
+        get_env(key.as_ref())
+    }
+}
+
+pub(in crate::cli) struct Live;
+
+impl FromEnv for Live {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Mock;
+
+    // impl FromEnv for Mock {
+    //     fn from_env(key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
+    //         let i = key.split("|||");
+    //         let key = i.next().unwrap();
+    //         let val = i.next().unwrap();
+    //     }
+    // }
 }
