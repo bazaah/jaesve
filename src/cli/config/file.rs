@@ -126,6 +126,10 @@ impl ConfigMerge for FileArgs {
     fn output_buffer_size(&mut self) -> Option<usize> {
         self.output_buffer_size.take()
     }
+
+    fn linereader_eol(&mut self) -> Option<char> {
+        self.linereader_eol.take()
+    }
 }
 
 impl Extend<FileArgs> for FileArgs {
@@ -196,14 +200,14 @@ impl From<ArgsBuilder> for FileArgs {
 #[derive(Deserialize, Default, Debug)]
 struct ArgsBuilder {
     debug: Option<usize>,
-    #[serde(deserialize_with = "deserialize_wide_bool")]
+    #[serde(deserialize_with = "deserialize_wide_bool", default)]
     quiet: Option<bool>,
-    #[serde(deserialize_with = "deserialize_wide_bool")]
+    #[serde(deserialize_with = "deserialize_wide_bool", default)]
     append: Option<bool>,
     line: Option<usize>,
     delimiter: Option<Delimiter>,
     guard: Option<Guard>,
-    #[serde(deserialize_with = "deserialize_format")]
+    #[serde(deserialize_with = "deserialize_format", default)]
     format: Option<CrateResult<Vec<Field>>>,
     #[serde(rename(deserialize = "config"))]
     subconfig: Option<SubConfigBuilder>,
@@ -262,6 +266,18 @@ where
             Ok(None)
         }
 
+        fn visit_bool<E: deError>(self, v: bool) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+
+        fn visit_i64<E: deError>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(match v {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
+            })
+        }
+
         fn visit_string<E: deError>(self, mut v: String) -> Result<Self::Value, E> {
             v.make_ascii_lowercase();
             Ok(match v.as_str() {
@@ -280,5 +296,211 @@ where
         }
     }
 
-    deserializer.deserialize_str(BoolVisitor(PhantomData))
+    deserializer.deserialize_any(BoolVisitor(PhantomData))
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::cli::ConfigMerge, std::error, toml::from_str as deserialize_str};
+
+    type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
+
+    macro_rules! arg_test {
+        (
+            $kv:expr
+        ) => {
+            deserialize_str::<FileArgs>($kv)
+        };
+        (
+            $kv:expr => $table:expr
+        ) => {
+            deserialize_str::<FileArgs>(concat!("[", $table, "]\n", $kv))
+        };
+    }
+
+    macro_rules! allowed_true {
+        (
+            $key:expr
+        ) => {
+            &[
+                concat!($key, " = 'yes'"),
+                concat!($key, " = 'Yes'"),
+                concat!($key, " = 'YES'"),
+                concat!($key, " = true"),
+                concat!($key, " = 'true'"),
+                concat!($key, " = 'True'"),
+                concat!($key, " = 'TRUE'"),
+                concat!($key, " = '1'"),
+                concat!($key, " = 1"),
+            ]
+        };
+    }
+
+    macro_rules! allowed_false {
+        (
+            $key:expr
+        ) => {
+            &[
+                concat!($key, " = 'no'"),
+                concat!($key, " = 'No'"),
+                concat!($key, " = 'NO'"),
+                concat!($key, " = false"),
+                concat!($key, " = 'false'"),
+                concat!($key, " = 'False'"),
+                concat!($key, " = 'FALSE'"),
+                concat!($key, " = '0'"),
+                concat!($key, " = 0"),
+            ]
+        };
+    }
+
+    #[test]
+    fn arg_debug_level() -> Result<()> {
+        let mut data = arg_test!("debug = 1")?;
+
+        assert_eq!(data.debug_level(), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn arg_quiet_true() -> Result<()> {
+        for arg in allowed_true!("quiet") {
+            let mut data: FileArgs = arg_test!(arg)?;
+            assert_eq!(data.quiet(), Some(true));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn arg_quiet_false() -> Result<()> {
+        for arg in allowed_false!("quiet") {
+            let mut data: FileArgs = arg_test!(arg)?;
+            assert_eq!(data.quiet(), Some(false));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn arg_append_true() -> Result<()> {
+        for arg in allowed_true!("append") {
+            let mut data: FileArgs = arg_test!(arg)?;
+            assert_eq!(data.append(), Some(true));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn arg_append_false() -> Result<()> {
+        for arg in allowed_false!("append") {
+            let mut data: FileArgs = arg_test!(arg)?;
+            assert_eq!(data.append(), Some(false));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn arg_line() -> Result<()> {
+        let mut data: FileArgs = arg_test!("line = 100")?;
+
+        assert_eq!(data.line(), Some(100));
+        Ok(())
+    }
+
+    #[test]
+    fn arg_delimiter_single() -> Result<()> {
+        let mut data: FileArgs = arg_test!("delimiter = ','")?;
+
+        assert_eq!(
+            format!("{:?}", data.delimiter()),
+            format!("{:?}", Some(Delimiter::from(",")))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn arg_delimiter_multiple() -> Result<()> {
+        let mut data: FileArgs = arg_test!("delimiter = '::'")?;
+
+        assert_eq!(
+            format!("{:?}", data.delimiter()),
+            format!("{:?}", Some(Delimiter::from("::")))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn arg_guard_single() -> Result<()> {
+        let mut data: FileArgs = arg_test!("guard = '~'")?;
+
+        assert_eq!(
+            format!("{:?}", data.guard()),
+            format!("{:?}", Some(Guard::from("~")))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn arg_guard_none() -> Result<()> {
+        let mut data: FileArgs = arg_test!("guard = ''")?;
+
+        assert_eq!(
+            format!("{:?}", data.guard()),
+            format!("{:?}", Some(Guard::None))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn arg_format_multiple() -> Result<()> {
+        let mut data: FileArgs = arg_test!("format = 'ident.jptr.type.value'")?;
+        let format = data.format().transpose()?;
+
+        assert_eq!(
+            format.as_ref().map(|v| v.as_slice()),
+            Some([Field::Identifier, Field::Pointer, Field::Type, Field::Value].as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn arg_format_single() -> Result<()> {
+        let mut data: FileArgs = arg_test!("format = 'ident'")?;
+        let format = data.format().transpose()?;
+
+        assert_eq!(
+            format.as_ref().map(|v| v.as_slice()),
+            Some([Field::Identifier].as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn arg_input_buffer_size() -> Result<()> {
+        let mut data = arg_test!("input_buffer_size = 16" => "config")?;
+
+        assert_eq!(data.input_buffer_size(), Some(16));
+        Ok(())
+    }
+
+    #[test]
+    fn arg_output_buffer_size() -> Result<()> {
+        let mut data = arg_test!("output_buffer_size = 64" => "config")?;
+
+        assert_eq!(data.output_buffer_size(), Some(64));
+        Ok(())
+    }
+
+    #[test]
+    fn arg_linereader_eol() -> Result<()> {
+        let mut data = arg_test!("linereader_eol = ';'" => "config")?;
+
+        assert_eq!(data.linereader_eol(), Some(';'));
+        Ok(())
+    }
 }
