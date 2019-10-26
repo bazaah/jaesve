@@ -305,7 +305,7 @@ mod tests {
 
     type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
 
-    macro_rules! arg_test {
+    macro_rules! mock {
         (
             $kv:expr
         ) => {
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn arg_debug_level() -> Result<()> {
-        let mut data = arg_test!("debug = 1")?;
+        let mut data = mock!("debug = 1")?;
 
         assert_eq!(data.debug_level(), Some(1));
         Ok(())
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn arg_quiet_true() -> Result<()> {
         for arg in allowed_true!("quiet") {
-            let mut data: FileArgs = arg_test!(arg)?;
+            let mut data: FileArgs = mock!(arg)?;
             assert_eq!(data.quiet(), Some(true));
         }
 
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn arg_quiet_false() -> Result<()> {
         for arg in allowed_false!("quiet") {
-            let mut data: FileArgs = arg_test!(arg)?;
+            let mut data: FileArgs = mock!(arg)?;
             assert_eq!(data.quiet(), Some(false));
         }
 
@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn arg_append_true() -> Result<()> {
         for arg in allowed_true!("append") {
-            let mut data: FileArgs = arg_test!(arg)?;
+            let mut data: FileArgs = mock!(arg)?;
             assert_eq!(data.append(), Some(true));
         }
 
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn arg_append_false() -> Result<()> {
         for arg in allowed_false!("append") {
-            let mut data: FileArgs = arg_test!(arg)?;
+            let mut data: FileArgs = mock!(arg)?;
             assert_eq!(data.append(), Some(false));
         }
 
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn arg_line() -> Result<()> {
-        let mut data: FileArgs = arg_test!("line = 100")?;
+        let mut data: FileArgs = mock!("line = 100")?;
 
         assert_eq!(data.line(), Some(100));
         Ok(())
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn arg_delimiter_single() -> Result<()> {
-        let mut data: FileArgs = arg_test!("delimiter = ','")?;
+        let mut data: FileArgs = mock!("delimiter = ','")?;
 
         assert_eq!(
             format!("{:?}", data.delimiter()),
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn arg_delimiter_multiple() -> Result<()> {
-        let mut data: FileArgs = arg_test!("delimiter = '::'")?;
+        let mut data: FileArgs = mock!("delimiter = '::'")?;
 
         assert_eq!(
             format!("{:?}", data.delimiter()),
@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn arg_guard_single() -> Result<()> {
-        let mut data: FileArgs = arg_test!("guard = '~'")?;
+        let mut data: FileArgs = mock!("guard = '~'")?;
 
         assert_eq!(
             format!("{:?}", data.guard()),
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn arg_guard_none() -> Result<()> {
-        let mut data: FileArgs = arg_test!("guard = ''")?;
+        let mut data: FileArgs = mock!("guard = ''")?;
 
         assert_eq!(
             format!("{:?}", data.guard()),
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn arg_format_multiple() -> Result<()> {
-        let mut data: FileArgs = arg_test!("format = 'ident.jptr.type.value'")?;
+        let mut data: FileArgs = mock!("format = 'ident.jptr.type.value'")?;
         let format = data.format().transpose()?;
 
         assert_eq!(
@@ -469,7 +469,7 @@ mod tests {
 
     #[test]
     fn arg_format_single() -> Result<()> {
-        let mut data: FileArgs = arg_test!("format = 'ident'")?;
+        let mut data: FileArgs = mock!("format = 'ident'")?;
         let format = data.format().transpose()?;
 
         assert_eq!(
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn arg_input_buffer_size() -> Result<()> {
-        let mut data = arg_test!("input_buffer_size = 16" => "config")?;
+        let mut data = mock!("input_buffer_size = 16" => "config")?;
 
         assert_eq!(data.input_buffer_size(), Some(16));
         Ok(())
@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn arg_output_buffer_size() -> Result<()> {
-        let mut data = arg_test!("output_buffer_size = 64" => "config")?;
+        let mut data = mock!("output_buffer_size = 64" => "config")?;
 
         assert_eq!(data.output_buffer_size(), Some(64));
         Ok(())
@@ -498,7 +498,7 @@ mod tests {
 
     #[test]
     fn arg_linereader_eol() -> Result<()> {
-        let mut data = arg_test!("linereader_eol = ';'" => "config")?;
+        let mut data = mock!("linereader_eol = ';'" => "config")?;
 
         assert_eq!(data.linereader_eol(), Some(';'));
         Ok(())

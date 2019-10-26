@@ -79,11 +79,12 @@ pub(in crate::cli) struct EnvArgs {
 impl EnvArgs {
     fn get_args<F>(f: F) -> Self
     where
-        F: Fn(&dyn AsRef<OsStr>) -> result::Result<String, VarError>,
+        //F: Fn(&dyn AsRef<OsStr>) -> result::Result<String, VarError>,
+        F: FromEnv,
     {
         let vars: HashMap<Kind, String> = ENVIRONMENT_VARIABLES
             .iter()
-            .map(|s| (Kind::from(s), f(s)))
+            .map(|s| (Kind::from(s), f.from_env(s)))
             .filter_map(|(k, res)| match res {
                 Ok(s) => Some((k, s)),
                 Err(e) => match e {
@@ -214,7 +215,7 @@ pub(in crate::cli) struct Env<E = Live> {
 
 impl<E: FromEnv> Env<E> {
     pub(in crate::cli) fn collect(self) -> EnvArgs {
-        EnvArgs::get_args(<E as FromEnv>::from_env)
+        EnvArgs::get_args(self.environment)
     }
 
     fn with_environment(env: E) -> Self {
@@ -229,7 +230,7 @@ impl Default for Env {
 }
 
 pub(in crate::cli) trait FromEnv {
-    fn from_env(key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
+    fn from_env(&self, key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
         get_env(key.as_ref())
     }
 }
