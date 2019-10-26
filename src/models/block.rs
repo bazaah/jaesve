@@ -227,7 +227,7 @@ impl std::fmt::Display for JsonValue {
 /// output delimiters, avoids locking the delimiter
 /// to a single char, and avoids unnecessary
 /// cloning on a single char
-#[cfg_attr(feature = "config-file", derive(Deserialize))]
+#[cfg_attr(feature = "config-file", derive(Deserialize), serde(from = "&str"))]
 #[derive(Debug)]
 pub enum Delimiter {
     Char(char),
