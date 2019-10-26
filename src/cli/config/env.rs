@@ -77,14 +77,13 @@ pub(in crate::cli) struct EnvArgs {
 }
 
 impl EnvArgs {
-    fn get_args<F>(f: F) -> Self
+    fn get_args<F>(env: F) -> Self
     where
-        //F: Fn(&dyn AsRef<OsStr>) -> result::Result<String, VarError>,
         F: FromEnv,
     {
         let vars: HashMap<Kind, String> = ENVIRONMENT_VARIABLES
             .iter()
-            .map(|s| (Kind::from(s), f.from_env(s)))
+            .map(|s| (Kind::from(s), env.from_env(s)))
             .filter_map(|(k, res)| match res {
                 Ok(s) => Some((k, s)),
                 Err(e) => match e {
@@ -218,6 +217,7 @@ impl<E: FromEnv> Env<E> {
         EnvArgs::get_args(self.environment)
     }
 
+    #[allow(dead_code)]
     fn with_environment(env: E) -> Self {
         Env { environment: env }
     }
@@ -241,15 +241,184 @@ impl FromEnv for Live {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        crate::models::{
+            block::{Delimiter, Guard},
+            field::Field,
+        },
+        std::iter::FromIterator,
+    };
 
-    struct Mock;
+    macro_rules! mock {
+        ( $( $key:expr, $val:expr ),* ) => {{
+            let iter = [ $( ($key, $val) )* ];
 
-    // impl FromEnv for Mock {
-    //     fn from_env(key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
-    //         let i = key.split("|||");
-    //         let key = i.next().unwrap();
-    //         let val = i.next().unwrap();
-    //     }
-    // }
+            let mock: Mock = iter.into_iter().cloned().collect();
+
+            Env::with_environment(mock).collect()
+        }}
+    }
+
+    #[derive(Debug)]
+    struct Mock<'a> {
+        map: HashMap<Kind, &'a str>,
+    }
+
+    impl<'a> FromIterator<(Kind, &'a str)> for Mock<'a> {
+        fn from_iter<I: IntoIterator<Item = (Kind, &'a str)>>(iter: I) -> Self {
+            let map: HashMap<Kind, &str> = iter.into_iter().collect();
+
+            Mock { map }
+        }
+    }
+
+    impl<'a> FromEnv for Mock<'a> {
+        fn from_env(&self, key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
+            self.map
+                .get(&Kind::from(key.as_ref().to_str().unwrap()))
+                .map(|s| Ok(s.to_string()))
+                .unwrap_or(Err(VarError::NotPresent))
+        }
+    }
+
+    const ALLOWED_TRUE: [&str; 7] = ["yes", "Yes", "YES", "true", "True", "TRUE", "1"];
+    const ALLOWED_FALSE: [&str; 7] = ["no", "No", "NO", "false", "False", "FALSE", "0"];
+
+    #[test]
+    fn arg_debug_level() {
+        let mut data = mock!(Kind::Debug, "3");
+
+        assert_eq!(data.debug_level(), Some(3));
+    }
+
+    #[test]
+    fn arg_quiet_true() {
+        for arg in ALLOWED_TRUE.into_iter() {
+            let mut data = mock!(Kind::Quiet, *arg);
+
+            assert_eq!(data.quiet(), Some(true));
+        }
+    }
+
+    #[test]
+    fn arg_quiet_false() {
+        for arg in ALLOWED_FALSE.into_iter() {
+            let mut data = mock!(Kind::Quiet, *arg);
+
+            assert_eq!(data.quiet(), Some(false));
+        }
+    }
+
+    #[test]
+    fn arg_append_true() {
+        for arg in ALLOWED_TRUE.into_iter() {
+            let mut data = mock!(Kind::Append, *arg);
+
+            assert_eq!(data.append(), Some(true));
+        }
+    }
+
+    #[test]
+    fn arg_append_false() {
+        for arg in ALLOWED_FALSE.into_iter() {
+            let mut data = mock!(Kind::Append, *arg);
+
+            assert_eq!(data.append(), Some(false));
+        }
+    }
+
+    #[test]
+    fn arg_line() {
+        let mut data = mock!(Kind::Line, "42");
+
+        assert_eq!(data.line(), Some(42));
+    }
+
+    #[test]
+    fn arg_delimiter_single() {
+        let mut data = mock!(Kind::Delim, ",");
+
+        assert_eq!(
+            format!("{:?}", data.delimiter()),
+            format!("{:?}", Some(Delimiter::from(",")))
+        );
+    }
+
+    #[test]
+    fn arg_delimiter_multiple() {
+        let mut data = mock!(Kind::Delim, "||");
+
+        assert_eq!(
+            format!("{:?}", data.delimiter()),
+            format!("{:?}", Some(Delimiter::from("||")))
+        );
+    }
+
+    #[test]
+    fn arg_guard_single() {
+        let mut data = mock!(Kind::Guard, "_");
+
+        assert_eq!(
+            format!("{:?}", data.guard()),
+            format!("{:?}", Some(Guard::from("_")))
+        );
+    }
+
+    #[test]
+    fn arg_guard_none() {
+        let mut data = mock!(Kind::Guard, "");
+
+        assert_eq!(
+            format!("{:?}", data.guard()),
+            format!("{:?}", Some(Guard::from("")))
+        );
+    }
+
+    #[test]
+    fn arg_format_multiple() -> result::Result<(), Box<dyn std::error::Error>> {
+        let mut data = mock!(Kind::Format, "ident.jptr.type.value");
+        let format = data.format().transpose()?;
+
+        assert_eq!(
+            format.as_ref().map(|v| v.as_slice()),
+            Some([Field::Identifier, Field::Pointer, Field::Type, Field::Value].as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn arg_format_single() -> result::Result<(), Box<dyn std::error::Error>> {
+        let mut data = mock!(Kind::Format, "ident");
+        let format = data.format().transpose()?;
+
+        assert_eq!(
+            format.as_ref().map(|v| v.as_slice()),
+            Some([Field::Identifier].as_ref())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn arg_buf_in() {
+        let mut data = mock!(Kind::BufIn, "16");
+
+        assert_eq!(data.input_buffer_size(), Some(16))
+    }
+
+    #[test]
+    fn arg_buf_out() {
+        let mut data = mock!(Kind::BufOut, "64");
+
+        assert_eq!(data.output_buffer_size(), Some(64))
+    }
+
+    #[test]
+    fn arg_linereader_eol() {
+        let mut data = mock!(Kind::RdrEol, ".");
+
+        assert_eq!(data.linereader_eol(), Some('.'))
+    }
 }
