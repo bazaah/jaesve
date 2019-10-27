@@ -13,6 +13,7 @@ use {
         collections::HashMap,
         env::{var as get_env, VarError},
         ffi::OsStr,
+        iter::FromIterator,
         result,
     },
 };
@@ -31,7 +32,7 @@ const ENVIRONMENT_VARIABLES: [&str; 10] = [
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Kind {
+pub(super) enum Kind {
     Debug,
     Quiet,
     Append,
@@ -218,7 +219,7 @@ impl<E: FromEnv> Env<E> {
     }
 
     #[allow(dead_code)]
-    fn with_environment(env: E) -> Self {
+    pub(super) fn with_environment(env: E) -> Self {
         Env { environment: env }
     }
 }
@@ -239,6 +240,28 @@ pub(in crate::cli) struct Live;
 
 impl FromEnv for Live {}
 
+#[derive(Debug, Default)]
+pub(super) struct Mock<'a> {
+    map: HashMap<Kind, &'a str>,
+}
+
+impl<'a> FromIterator<(Kind, &'a str)> for Mock<'a> {
+    fn from_iter<I: IntoIterator<Item = (Kind, &'a str)>>(iter: I) -> Self {
+        let map: HashMap<Kind, &str> = iter.into_iter().collect();
+
+        Mock { map }
+    }
+}
+
+impl<'a> FromEnv for Mock<'a> {
+    fn from_env(&self, key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
+        self.map
+            .get(&Kind::from(key.as_ref().to_str().unwrap()))
+            .map(|s| Ok(s.to_string()))
+            .unwrap_or(Err(VarError::NotPresent))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -247,7 +270,6 @@ mod tests {
             block::{Delimiter, Guard},
             field::Field,
         },
-        std::iter::FromIterator,
     };
 
     macro_rules! mock {
@@ -258,28 +280,6 @@ mod tests {
 
             Env::with_environment(mock).collect()
         }}
-    }
-
-    #[derive(Debug)]
-    struct Mock<'a> {
-        map: HashMap<Kind, &'a str>,
-    }
-
-    impl<'a> FromIterator<(Kind, &'a str)> for Mock<'a> {
-        fn from_iter<I: IntoIterator<Item = (Kind, &'a str)>>(iter: I) -> Self {
-            let map: HashMap<Kind, &str> = iter.into_iter().collect();
-
-            Mock { map }
-        }
-    }
-
-    impl<'a> FromEnv for Mock<'a> {
-        fn from_env(&self, key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
-            self.map
-                .get(&Kind::from(key.as_ref().to_str().unwrap()))
-                .map(|s| Ok(s.to_string()))
-                .unwrap_or(Err(VarError::NotPresent))
-        }
     }
 
     const ALLOWED_TRUE: [&str; 7] = ["yes", "Yes", "YES", "true", "True", "TRUE", "1"];

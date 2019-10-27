@@ -209,13 +209,15 @@ struct ArgsBuilder {
     guard: Option<Guard>,
     #[serde(deserialize_with = "deserialize_format", default)]
     format: Option<CrateResult<Vec<Field>>>,
-    #[serde(rename(deserialize = "config"))]
+    #[serde(rename = "config")]
     subconfig: Option<SubConfigBuilder>,
 }
 
 #[derive(Deserialize, Default, Debug)]
 struct SubConfigBuilder {
+    #[serde(rename = "buf_out", alias = "buf-out")]
     output_buffer_size: Option<usize>,
+    #[serde(rename = "buf_in", alias = "buf-in")]
     input_buffer_size: Option<usize>,
     linereader_eol: Option<char>,
 }
@@ -300,8 +302,11 @@ where
 }
 
 #[cfg(test)]
+pub(super) use toml::from_str as deserialize_str;
+
+#[cfg(test)]
 mod tests {
-    use {super::*, crate::cli::ConfigMerge, std::error, toml::from_str as deserialize_str};
+    use {super::*, crate::cli::ConfigMerge, std::error};
 
     type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
 
@@ -482,7 +487,7 @@ mod tests {
 
     #[test]
     fn arg_input_buffer_size() -> Result<()> {
-        let mut data = mock!("input_buffer_size = 16" => "config")?;
+        let mut data = mock!("buf-in = 16" => "config")?;
 
         assert_eq!(data.input_buffer_size(), Some(16));
         Ok(())
@@ -490,7 +495,7 @@ mod tests {
 
     #[test]
     fn arg_output_buffer_size() -> Result<()> {
-        let mut data = mock!("output_buffer_size = 64" => "config")?;
+        let mut data = mock!("buf_out = 64" => "config")?;
 
         assert_eq!(data.output_buffer_size(), Some(64));
         Ok(())

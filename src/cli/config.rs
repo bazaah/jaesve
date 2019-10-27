@@ -37,6 +37,7 @@ pub(in crate::cli) fn finalize_args<P: AsRef<Path>>(_extra: &[P]) -> EnvArgs {
     Env::default().collect()
 }
 
+#[derive(Debug)]
 pub(in crate::cli) struct ProtoArgs<T> {
     config: T,
 }
@@ -220,4 +221,408 @@ mod args {
     pub(super) type OptEOL = Option<char>;
     pub(super) type OptQuiet = Option<bool>;
     pub(super) type OptAppend = Option<bool>;
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::{
+            env::{Env, Kind, Mock},
+            *,
+        },
+        crate::cli::generate_cli,
+        clap::AppSettings,
+        simplelog::LevelFilter,
+        std::{error, result},
+    };
+
+    #[cfg(feature = "config-file")]
+    use super::file::{deserialize_str, FileArgs};
+
+    type Result<T> = result::Result<T, Box<dyn error::Error>>;
+
+    macro_rules! mock {
+        (env $( $ek:expr, $ev:expr ),* ;file $fkv:expr) => {{
+            #[allow(unused_mut)]
+            let mut env = Env::with_environment([ $( ($ek, $ev) )* ].into_iter().cloned().collect::<Mock>()).collect();
+
+            #[cfg(feature = "config-file")]
+            {
+                let file = deserialize_str::<FileArgs>($fkv).unwrap();
+                env.merge(file);
+            }
+
+            ProtoArgs::new(env)
+        }};
+        (env $( $ek:expr, $ev:expr ),* ;file $fkv:expr => $table:expr) => {{
+            #[allow(unused_mut)]
+            let mut env = Env::with_environment([ $( ($ek, $ev) )* ].into_iter().cloned().collect::<Mock>()).collect();
+
+            #[cfg(feature = "config-file")]
+            {
+                let file = deserialize_str::<FileArgs>(concat!("[", $table, "]\n", $fkv)).unwrap();
+                env.merge(file);
+            }
+
+            ProtoArgs::new(env)
+        }};
+        (file $fkv:expr) => {{
+            #[allow(unused_mut)]
+            let mut env = Env::with_environment(Mock::default()).collect();
+
+            #[cfg(feature = "config-file")]
+            {
+                let file = deserialize_str::<FileArgs>($fkv).unwrap();
+                env.merge(file);
+            }
+
+            ProtoArgs::new(env)
+        }};
+        (file $fkv:expr => $table:expr) => {{
+            #[allow(unused_mut)]
+            let mut env = Env::with_environment(Mock::default()).collect();
+
+            #[cfg(feature = "config-file")]
+            {
+                let file = deserialize_str::<FileArgs>(concat!("[", $table, "]\n", $fkv)).unwrap();
+                env.merge(file);
+            }
+
+            ProtoArgs::new(env)
+        }};
+    }
+
+    macro_rules! cli {
+        () => {
+            generate_cli().setting(AppSettings::NoBinaryName).get_matches_from_safe::<&[&str], &&str>(&[])
+        };
+        ( $( $cli:expr ),* ) => {
+            generate_cli().setting(AppSettings::NoBinaryName).get_matches_from_safe(&[$( $cli ),*])
+        };
+    }
+
+    #[test]
+    fn merge_debug_level_cli() -> Result<()> {
+        let cli = cli!("-v")?;
+        let mut proto = mock!(env Kind::Debug, "2" ;file "debug = 3");
+
+        assert_eq!(proto.debug_level(&cli), LevelFilter::Info);
+        Ok(())
+    }
+
+    #[test]
+    fn merge_debug_level_env() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(env Kind::Debug, "2" ;file "debug = 3");
+
+        assert_eq!(proto.debug_level(&cli), LevelFilter::Debug);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_debug_level_file() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(file "debug = 3");
+
+        assert_eq!(proto.debug_level(&cli), LevelFilter::Trace);
+        Ok(())
+    }
+
+    #[test]
+    fn merge_quiet_cli() -> Result<()> {
+        let cli = cli!("--quiet")?;
+        let mut proto = mock!(env Kind::Quiet, "false" ;file "quiet = 'no'");
+
+        assert_eq!(proto.debug_level(&cli), LevelFilter::Off);
+        Ok(())
+    }
+
+    #[test]
+    fn merge_quiet_env() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(env Kind::Quiet, "yes" ;file "quiet = false");
+
+        assert_eq!(proto.debug_level(&cli), LevelFilter::Off);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_quiet_file() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(file "quiet = 'Yes'");
+
+        assert_eq!(proto.debug_level(&cli), LevelFilter::Off);
+        Ok(())
+    }
+
+    #[test]
+    fn merge_append_cli() -> Result<()> {
+        let cli = cli!("--append", "--output", ".dummy")?;
+        let mut proto = mock!(env Kind::Append, "false" ;file "append = 'NO'");
+
+        assert_eq!(proto.writer(&cli), (Some(format!(".dummy")), true));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_append_env() -> Result<()> {
+        let cli = cli!("--output", ".dummy")?;
+        let mut proto = mock!(env Kind::Append, "Yes" ;file "append = 'False'");
+
+        assert_eq!(proto.writer(&cli), (Some(format!(".dummy")), true));
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_append_file() -> Result<()> {
+        let cli = cli!("--output", ".dummy")?;
+        let mut proto = mock!(file "append = '1'");
+
+        assert_eq!(proto.writer(&cli), (Some(format!(".dummy")), true));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_format_cli() -> Result<()> {
+        let cli = cli!("--format", "ident")?;
+        let mut proto = mock!(env Kind::Format, "jptr" ;file "format = 'type'");
+
+        assert_eq!(proto.format(&cli), vec![Field::Identifier]);
+        Ok(())
+    }
+
+    #[test]
+    fn merge_format_env() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(env Kind::Format, "jptr" ;file "format = 'type'");
+
+        assert_eq!(proto.format(&cli), vec![Field::Pointer]);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_format_file() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(file "format = 'type'");
+
+        assert_eq!(proto.format(&cli), vec![Field::Type]);
+        Ok(())
+    }
+
+    #[test]
+    fn merge_line_cli() -> Result<()> {
+        let cli = cli!("--line", "10")?;
+        let mut proto = mock!(env Kind::Line, "20" ;file "line = 30");
+
+        assert_eq!(proto.by_line(&cli), (true, 10));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_line_env() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(env Kind::Line, "20" ;file "line = 30");
+
+        assert_eq!(proto.by_line(&cli), (true, 20));
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_line_file() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(file "line = 30");
+
+        assert_eq!(proto.by_line(&cli), (true, 30));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_delimiter_cli() -> Result<()> {
+        let cli = cli!("--delim", "?")?;
+        let mut proto = mock!(env Kind::Delim, "*" ;file "delimiter = '+'");
+
+        assert_eq!(
+            format!("{:?}", proto.delimiter(&cli)),
+            format!("{:?}", Delimiter::from("?"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_delimiter_env() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(env Kind::Delim, "*" ;file "delimiter = '+'");
+
+        assert_eq!(
+            format!("{:?}", proto.delimiter(&cli)),
+            format!("{:?}", Delimiter::from("*"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_delimiter_file() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(file "delimiter = '+'");
+
+        assert_eq!(
+            format!("{:?}", proto.delimiter(&cli)),
+            format!("{:?}", Delimiter::from("+"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_guard_cli() -> Result<()> {
+        let cli = cli!("--guard", "")?;
+        let mut proto = mock!(env Kind::Guard, "." ;file "guard = '!'");
+
+        assert_eq!(
+            format!("{:?}", proto.guard(&cli)),
+            format!("{:?}", Guard::from(""))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_guard_env() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(env Kind::Guard, "." ;file "guard = '!'");
+
+        assert_eq!(
+            format!("{:?}", proto.guard(&cli)),
+            format!("{:?}", Guard::from("."))
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_guard_file() -> Result<()> {
+        let cli = cli!()?;
+        let mut proto = mock!(file "guard = '!'");
+
+        assert_eq!(
+            format!("{:?}", proto.guard(&cli)),
+            format!("{:?}", Guard::from("!"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_output_buffer_size_cli() -> Result<()> {
+        let cli = cli!("config", "--buf_out", "128")?;
+        let mut proto = mock!(env Kind::BufOut, "64" ;file "buf-out = 32");
+
+        assert_eq!(
+            proto.output_buffer_size(&cli.subcommand_matches("config").unwrap()),
+            128
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_output_buffer_size_env() -> Result<()> {
+        let cli = cli!("config")?;
+        let mut proto = mock!(env Kind::BufOut, "64" ;file "buf-out = 32");
+
+        assert_eq!(
+            proto.output_buffer_size(&cli.subcommand_matches("config").unwrap()),
+            64
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_output_buffer_size_file() -> Result<()> {
+        let cli = cli!("config")?;
+        let mut proto = mock!(file "buf-out = 32" => "config");
+
+        assert_eq!(
+            proto.output_buffer_size(&cli.subcommand_matches("config").unwrap()),
+            32
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_input_buffer_size_cli() -> Result<()> {
+        let cli = cli!("config", "--buf_in", "128")?;
+        let mut proto = mock!(env Kind::BufIn, "64" ;file "buf_in = 32");
+
+        assert_eq!(
+            proto.input_buffer_size(&cli.subcommand_matches("config").unwrap()),
+            128
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_input_buffer_size_env() -> Result<()> {
+        let cli = cli!("config")?;
+        let mut proto = mock!(env Kind::BufIn, "64" ;file "buf_in = 32");
+
+        assert_eq!(
+            proto.input_buffer_size(&cli.subcommand_matches("config").unwrap()),
+            64
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_input_buffer_size_file() -> Result<()> {
+        let cli = cli!("config")?;
+        let mut proto = mock!(file "buf_in = 32" => "config");
+
+        assert_eq!(
+            proto.input_buffer_size(&cli.subcommand_matches("config").unwrap()),
+            32
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_linereader_eol_cli() -> Result<()> {
+        let cli = cli!("config", "--linereader_eol", ":")?;
+        let mut proto = mock!(env Kind::RdrEol, "=" ;file "linereader_eol = '-'");
+
+        assert_eq!(
+            proto.linereader_eol(&cli.subcommand_matches("config").unwrap()),
+            b':'
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_linereader_eol_env() -> Result<()> {
+        let cli = cli!("config")?;
+        let mut proto = mock!(env Kind::RdrEol, "=" ;file "linereader_eol = '-'");
+
+        assert_eq!(
+            proto.linereader_eol(&cli.subcommand_matches("config").unwrap()),
+            b'='
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_linereader_eol_file() -> Result<()> {
+        let cli = cli!("config")?;
+        let mut proto = mock!(file "linereader_eol = '-'" => "config");
+
+        assert_eq!(
+            proto.linereader_eol(&cli.subcommand_matches("config").unwrap()),
+            b'-'
+        );
+        Ok(())
+    }
 }
