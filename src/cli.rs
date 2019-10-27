@@ -489,19 +489,14 @@ impl SubConfig {
                     set
                 });
                 // Unwraps are safe because of default values set + validated by clap
-                let multi: usize = match substore.value_of("byte_multiplier") {
-                    Some("B") => 1,
-                    Some("K") => 1024,
-                    Some("M") => 1024 * 1024,
-                    _ => unreachable!("Default value should be supplied by clap"),
-                };
+                let factor = proto.factor(substore);
                 let max_handles = substore
                     .value_of("max_open_file_handles")
                     .unwrap()
                     .parse::<usize>()
                     .unwrap();
-                let output_buffer_size = proto.output_buffer_size(substore) * multi;
-                let input_buffer_size = proto.input_buffer_size(substore) * multi;
+                let output_buffer_size = proto.output_buffer_size(substore) * factor;
+                let input_buffer_size = proto.input_buffer_size(substore) * factor;
                 let linereader_eol = proto.linereader_eol(substore);
 
                 SubConfig {

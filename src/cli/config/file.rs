@@ -75,6 +75,7 @@ pub(in crate::cli) struct FileArgs {
     output_buffer_size: OptBufOut,
     input_buffer_size: OptBufIn,
     linereader_eol: OptEOL,
+    factor: OptFactor,
 }
 
 impl ConfigMerge for FileArgs {
@@ -89,6 +90,7 @@ impl ConfigMerge for FileArgs {
         FileArgs::priority_merge(&mut self.output_buffer_size, other.output_buffer_size());
         FileArgs::priority_merge(&mut self.input_buffer_size, other.input_buffer_size());
         FileArgs::priority_merge(&mut self.linereader_eol, other.linereader_eol());
+        FileArgs::priority_merge(&mut self.factor, other.factor());
     }
 
     fn debug_level(&mut self) -> Option<usize> {
@@ -130,6 +132,10 @@ impl ConfigMerge for FileArgs {
     fn linereader_eol(&mut self) -> Option<char> {
         self.linereader_eol.take()
     }
+
+    fn factor(&mut self) -> Option<usize> {
+        self.factor.take()
+    }
 }
 
 impl Extend<FileArgs> for FileArgs {
@@ -167,6 +173,7 @@ impl From<ArgsBuilder> for FileArgs {
                         output_buffer_size,
                         input_buffer_size,
                         linereader_eol,
+                        factor,
                     } => Self {
                         debug,
                         line,
@@ -178,6 +185,7 @@ impl From<ArgsBuilder> for FileArgs {
                         output_buffer_size,
                         input_buffer_size,
                         linereader_eol,
+                        factor,
                     },
                 },
                 None => Self {
@@ -191,6 +199,7 @@ impl From<ArgsBuilder> for FileArgs {
                     output_buffer_size: None,
                     input_buffer_size: None,
                     linereader_eol: None,
+                    factor: None,
                 },
             },
         }
@@ -220,6 +229,8 @@ struct SubConfigBuilder {
     #[serde(rename = "buf_in", alias = "buf-in")]
     input_buffer_size: Option<usize>,
     linereader_eol: Option<char>,
+    #[serde(deserialize_with = "deserialize_factor", default)]
+    factor: Option<usize>,
 }
 
 fn deserialize_format<'de, D>(deserializer: D) -> Result<Option<CrateResult<Vec<Field>>>, D::Error>
@@ -299,6 +310,40 @@ where
     }
 
     deserializer.deserialize_any(BoolVisitor(PhantomData))
+}
+
+fn deserialize_factor<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct FactorVisitor(PhantomData<fn() -> Option<usize>>);
+
+    impl<'de> Visitor<'de> for FactorVisitor {
+        type Value = Option<usize>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("one of: B, K, M, usize")
+        }
+
+        fn visit_none<E: deError>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_u64<E: deError>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(Some(v as usize))
+        }
+
+        fn visit_str<E: deError>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(match v {
+                "B" => Some(1),
+                "K" => Some(1024),
+                "M" => Some(1024 * 1024),
+                _ => None,
+            })
+        }
+    }
+
+    deserializer.deserialize_any(FactorVisitor(PhantomData))
 }
 
 #[cfg(test)]
@@ -506,6 +551,14 @@ mod tests {
         let mut data = mock!("linereader_eol = ';'" => "config")?;
 
         assert_eq!(data.linereader_eol(), Some(';'));
+        Ok(())
+    }
+
+    #[test]
+    fn arg_factor() -> Result<()> {
+        let mut data = mock!("factor = 'K'" => "config")?;
+
+        assert_eq!(data.factor(), Some(1024));
         Ok(())
     }
 }

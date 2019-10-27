@@ -18,7 +18,7 @@ use {
     },
 };
 
-const ENVIRONMENT_VARIABLES: [&str; 10] = [
+const ENVIRONMENT_VARIABLES: [&str; 11] = [
     "JAESVE_DEBUG",
     "JAESVE_QUIET",
     "JAESVE_APPEND",
@@ -29,6 +29,7 @@ const ENVIRONMENT_VARIABLES: [&str; 10] = [
     "JAESVE_BUF_OUT",
     "JAESVE_BUF_IN",
     "JAESVE_LINEREADER_EOL",
+    "JAESVE_FACTOR",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,6 +44,7 @@ pub(super) enum Kind {
     BufIn,
     BufOut,
     RdrEol,
+    Factor,
 }
 
 impl<S: AsRef<str>> From<S> for Kind {
@@ -58,6 +60,7 @@ impl<S: AsRef<str>> From<S> for Kind {
             "JAESVE_BUF_OUT" => Kind::BufIn,
             "JAESVE_BUF_IN" => Kind::BufOut,
             "JAESVE_LINEREADER_EOL" => Kind::RdrEol,
+            "JAESVE_FACTOR" => Kind::Factor,
             _ => panic!("Tried to convert bad &str to env Kind"),
         }
     }
@@ -75,6 +78,7 @@ pub(in crate::cli) struct EnvArgs {
     output_buffer_size: OptBufOut,
     input_buffer_size: OptBufIn,
     linereader_eol: OptEOL,
+    factor: OptFactor,
 }
 
 impl EnvArgs {
@@ -131,6 +135,9 @@ impl EnvArgs {
             linereader_eol: vars
                 .get(&Kind::RdrEol)
                 .and_then(|s| log_err(s.parse::<char>(), &s)),
+            factor: vars
+                .get(&Kind::Factor)
+                .and_then(|s| log_err(parse_factor(&s), &s)),
         }
     }
 }
@@ -147,6 +154,7 @@ impl ConfigMerge for EnvArgs {
         EnvArgs::priority_merge(&mut self.output_buffer_size, other.output_buffer_size());
         EnvArgs::priority_merge(&mut self.input_buffer_size, other.input_buffer_size());
         EnvArgs::priority_merge(&mut self.linereader_eol, other.linereader_eol());
+        EnvArgs::priority_merge(&mut self.factor, other.factor());
     }
 
     fn debug_level(&mut self) -> Option<usize> {
@@ -188,6 +196,10 @@ impl ConfigMerge for EnvArgs {
     fn linereader_eol(&mut self) -> Option<char> {
         self.linereader_eol.take()
     }
+
+    fn factor(&mut self) -> Option<usize> {
+        self.factor.take()
+    }
 }
 
 fn parse_wide_bool<S: AsRef<str>>(s: S) -> result::Result<bool, String> {
@@ -196,6 +208,16 @@ fn parse_wide_bool<S: AsRef<str>>(s: S) -> result::Result<bool, String> {
         "false" | "no" | "0" => Ok(false),
         _ => Err(format!("Unable to parse into a bool")),
     }
+}
+
+fn parse_factor<S: AsRef<str>>(s: S) -> result::Result<usize, String> {
+    match s.as_ref() {
+        "B" => Ok(1),
+        "K" => Ok(1024),
+        "M" => Ok(1024 * 1024),
+        _ => Err(format!("Unable to parse into usize")),
+    }
+    .or_else(|e| s.as_ref().parse::<usize>().map_err(|_| e))
 }
 
 fn log_err<T, E: std::fmt::Display, S: AsRef<str>>(
@@ -420,5 +442,12 @@ mod tests {
         let mut data = mock!(Kind::RdrEol, ".");
 
         assert_eq!(data.linereader_eol(), Some('.'))
+    }
+
+    #[test]
+    fn arg_factor() {
+        let mut data = mock!(Kind::Factor, "B");
+
+        assert_eq!(data.factor(), Some(1))
     }
 }

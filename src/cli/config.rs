@@ -203,6 +203,26 @@ where
             (_, _, _) => unreachable!("Default should be set by clap"),
         }
     }
+
+    pub(in crate::cli) fn factor(&mut self, substore: &ArgMatches<'_>) -> usize {
+        let parse = |s: &str| match s {
+            "B" => 1,
+            "K" => 1024,
+            "M" => 1024 * 1024,
+            _ => unreachable!("Clap validates this is one of: 'B','K','M'"),
+        };
+
+        match (
+            substore.occurrences_of("byte_multiplier"),
+            substore.value_of("byte_multiplier"),
+            self.config.factor(),
+        ) {
+            (0, _, Some(fac)) => fac,
+            (0, Some(s), None) => parse(s),
+            (_, Some(s), _) => parse(s),
+            (_, _, _) => unreachable!("Default should be set by clap"),
+        }
+    }
 }
 
 mod args {
@@ -221,6 +241,7 @@ mod args {
     pub(super) type OptEOL = Option<char>;
     pub(super) type OptQuiet = Option<bool>;
     pub(super) type OptAppend = Option<bool>;
+    pub(super) type OptFactor = Option<usize>;
 }
 
 #[cfg(test)]
@@ -623,6 +644,40 @@ mod tests {
             proto.linereader_eol(&cli.subcommand_matches("config").unwrap()),
             b'-'
         );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_factor_cli() -> Result<()> {
+        let cli = cli!("config", "--factor", "M")?;
+        let mut proto = mock!(env Kind::Factor, "K" ;file "factor = 'B'");
+
+        assert_eq!(
+            proto.factor(&cli.subcommand_matches("config").unwrap()),
+            1024 * 1024
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_factor_env() -> Result<()> {
+        let cli = cli!("config")?;
+        let mut proto = mock!(env Kind::Factor, "K" ;file "factor = 'B'");
+
+        assert_eq!(
+            proto.factor(&cli.subcommand_matches("config").unwrap()),
+            1024
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "config-file")]
+    fn merge_factor_file() -> Result<()> {
+        let cli = cli!("config")?;
+        let mut proto = mock!(file "factor = 'B'" => "config");
+
+        assert_eq!(proto.factor(&cli.subcommand_matches("config").unwrap()), 1);
         Ok(())
     }
 }
