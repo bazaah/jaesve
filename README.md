@@ -22,7 +22,6 @@ Jaesve comes with a CLI, courtesy of [clap.rs](https://github.com/clap-rs/clap).
 - `-h` `--help` Displays help (use `--help` for more detailed messages)
 - `-V` `--version` Displays version information
 - `-a` `--append` Append to output file, instead of overwriting
-- `-l` `--line` Set stdin to read a JSON doc from each line
 - `-q` `--quiet` Silences error messages
 - `-v` Verbosity of debug information
   - Max: 3
@@ -30,7 +29,9 @@ Jaesve comes with a CLI, courtesy of [clap.rs](https://github.com/clap-rs/clap).
 #### Options
 
 - `-o` `--output` Set output file to write
-  - Default: writes to stdout
+  - Default: `stdout`
+- `-l` `--line` Set stdin to read a JSON doc from each line, and the line to start processing from
+  - Default: `0`
 - `-E` `--regex` Set a regex to filter output
 - `-c` `--column` Sets field to match regex on
   - Possible: `ident, jptr, type, value, jmes`
