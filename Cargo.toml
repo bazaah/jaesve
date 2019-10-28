@@ -15,6 +15,12 @@ documentation = "https://github.com/bazaah/jaesve"
 homepage = "https://github.com/bazaah/jaesve"
 
 [features]
+# Enables the use of config files for setting many of the available CLI options
+# Note that enabling this will moderately slow complilation times and increase
+# the binary's size
+#
+# The program will check for $HOME/jaesve.conf, $CONFIG/jaesve.conf, and /etc/jaesve.conf (*nix only)
+# And expects data to be in TOML format
 config-file = ["serde", "toml", "dirs"]
 
 [dependencies]
@@ -36,3 +42,8 @@ itertools = "0.8.0"
 
 [profile.release]
 lto = true
+
+[badges]
+azure-devops = { project = "bazaah/jaesve", pipeline = "jaesve" }
+maintenance = { status = "actively-developed" }
+is-it-maintained-open-issues = { repository = "bazaah/jaesve" }

@@ -82,7 +82,7 @@ fn worker_reader(
                                 if check_index(CLI.regex(), index)
                                     && index
                                         .as_ref()
-                                        .map_or(true, |i| i >= &&CLI.line_start_number())
+                                        .map_or(true, |i| *i >= CLI.line_start_number())
                                 {
                                     debug!(
                                         "Processing line {} of input {}...",

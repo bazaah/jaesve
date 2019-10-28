@@ -51,7 +51,7 @@ pub(super) fn merge_config_files<P: AsRef<Path>>(extra: &[P]) -> FileArgs {
                 .iter()
                 .filter_map(|opt| opt.as_ref().map(|p| p.as_path())),
         )
-        .map(|path| try_parse_file(path))
+        .map(try_parse_file)
         .filter_map(|res| match res {
             Ok(file) => Some(file),
             Err(e) => with_log!(None, warn!("Unable to open config path: {}", e)),

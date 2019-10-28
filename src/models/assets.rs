@@ -340,7 +340,7 @@ impl TryFrom<(Option<Identifier>, Option<PointerKind>, Option<Vec<u8>>)> for Jso
                 from_slice(data.as_slice()).context(
                     Some(data.len())
                         .filter(|l| *l >= CLI.input_buffer_size())
-                        .map(|l| Context::DataLenEqualLineBufferLen(l)),
+                        .map(Context::DataLenEqualLineBufferLen),
                 )
             })
             .transpose()?;
@@ -389,7 +389,7 @@ where
 pub trait OrDisplay {
     type Item: std::fmt::Debug;
     fn or_display<'a, 'b>(&'a self, fallback: &'b str) -> NoneFallback<'a, 'b, Self::Item>;
-    fn or_untracked<'a>(&'a self) -> NoneDefault<'a, Self::Item>;
+    fn or_untracked(&self) -> NoneDefault<'_, Self::Item>;
 }
 
 impl<T> OrDisplay for Option<T>
@@ -404,7 +404,7 @@ where
             })
     }
 
-    fn or_untracked<'a>(&'a self) -> NoneDefault<'a, T> {
+    fn or_untracked(&self) -> NoneDefault<'_, T> {
         NoneDefault::from(self.as_ref())
     }
 }
