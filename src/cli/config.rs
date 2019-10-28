@@ -22,6 +22,7 @@ mod file;
 mod env;
 mod merge;
 
+/// Merges all file and environmental args, including potential user defined files
 #[cfg(feature = "config-file")]
 pub(in crate::cli) fn finalize_args<P: AsRef<Path>>(extra: &[P]) -> EnvArgs {
     let mut env_config = Env::default().collect();
@@ -32,11 +33,19 @@ pub(in crate::cli) fn finalize_args<P: AsRef<Path>>(extra: &[P]) -> EnvArgs {
     env_config
 }
 
+/// Collects environmental args only
 #[cfg(not(feature = "config-file"))]
 pub(in crate::cli) fn finalize_args<P: AsRef<Path>>(_extra: &[P]) -> EnvArgs {
     Env::default().collect()
 }
 
+/// Defines the logic for deciding which value to use for each configurable arg
+/// In order of precedence: (highest to lowest)
+///
+/// - CLI
+/// - Environment
+/// - File
+/// - CLI default
 #[derive(Debug)]
 pub(in crate::cli) struct ProtoArgs<T> {
     config: T,
@@ -113,7 +122,7 @@ where
                     .unwrap_or_else(|| fmt.split('.').map(Field::from).collect())
             }
             (_, Some(fmt)) => fmt.split('.').map(Field::from).collect(),
-            (_, _) => unreachable!(),
+            (_, _) => unreachable!("Default format should be set by clap"),
         }
     }
 
@@ -132,7 +141,9 @@ where
             self.config.line(),
         ) {
             (0, _, Some(num)) => (true, num),
+            // Unwrap validated by clap
             (0, Some(num), None) => (false, num.parse::<usize>().unwrap()),
+            // Unwrap validated by clap
             (_, Some(num), _) => (true, num.parse::<usize>().unwrap()),
             (_, _, _) => unreachable!("Start from line default should be set by clap"),
         }
@@ -147,7 +158,7 @@ where
             (0, _, Some(delim)) => delim,
             (0, Some(s), None) => s.into(),
             (_, Some(s), _) => s.into(),
-            (_, _, _) => unreachable!("Default should be set by clap"),
+            (_, _, _) => unreachable!("Default delimiter should be set by clap"),
         }
     }
 
@@ -158,10 +169,13 @@ where
             self.config.guard(),
         ) {
             (0, _, Some(guard)) => guard,
+            // Unwrap validated by clap
             (0, Some(s), None) => Guard::Some(s.parse::<char>().unwrap()),
+            // Unwrap validated by clap
             (_, Some(s), _) if s.is_empty() => Guard::None,
+            // Unwrap validated by clap
             (_, Some(s), _) => Guard::Some(s.parse::<char>().unwrap()),
-            (_, _, _) => unreachable!("Default should be set by clap"),
+            (_, _, _) => unreachable!("Default guard should be set by clap"),
         }
     }
 
@@ -172,9 +186,11 @@ where
             self.config.output_buffer_size(),
         ) {
             (0, _, Some(u)) => u,
+            // Unwrap validated by clap
             (0, Some(s), None) => s.parse::<usize>().unwrap(),
+            // Unwrap validated by clap
             (_, Some(s), _) => s.parse::<usize>().unwrap(),
-            (_, _, _) => unreachable!("Default should be set by clap"),
+            (_, _, _) => unreachable!("Default output_buffer should be set by clap"),
         }
     }
 
@@ -185,9 +201,11 @@ where
             self.config.input_buffer_size(),
         ) {
             (0, _, Some(u)) => u,
+            // Unwrap validated by clap
             (0, Some(s), None) => s.parse::<usize>().unwrap(),
+            // Unwrap validated by clap
             (_, Some(s), _) => s.parse::<usize>().unwrap(),
-            (_, _, _) => unreachable!("Default should be set by clap"),
+            (_, _, _) => unreachable!("Default input_buffer should be set by clap"),
         }
     }
 
@@ -198,9 +216,11 @@ where
             self.config.linereader_eol(),
         ) {
             (0, _, Some(c)) => c as u8,
+            // Unwrap validated by clap
             (0, Some(s), None) => s.parse::<char>().unwrap() as u8,
+            // Unwrap validated by clap
             (_, Some(s), _) => s.parse::<char>().unwrap() as u8,
-            (_, _, _) => unreachable!("Default should be set by clap"),
+            (_, _, _) => unreachable!("Default linereader_eol should be set by clap"),
         }
     }
 
@@ -220,11 +240,12 @@ where
             (0, _, Some(fac)) => fac,
             (0, Some(s), None) => parse(s),
             (_, Some(s), _) => parse(s),
-            (_, _, _) => unreachable!("Default should be set by clap"),
+            (_, _, _) => unreachable!("Default factor should be set by clap"),
         }
     }
 }
 
+/// Common type-defs used by child modules
 mod args {
     use crate::models::{
         block::{Delimiter, Guard},

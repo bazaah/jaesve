@@ -62,6 +62,8 @@ pub(super) fn merge_config_files<P: AsRef<Path>>(extra: &[P]) -> FileArgs {
 fn try_parse_file<P: AsRef<Path>>(path: P) -> CrateResult<FileArgs> {
     toml_from(&read(path)?).map_err(|e| e.into())
 }
+
+/// Container for args deserialized from a file
 #[derive(Deserialize, Default, Debug)]
 #[serde(from = "ArgsBuilder")]
 pub(in crate::cli) struct FileArgs {
@@ -206,6 +208,7 @@ impl From<ArgsBuilder> for FileArgs {
     }
 }
 
+/// Deserialization target for toml
 #[derive(Deserialize, Default, Debug)]
 struct ArgsBuilder {
     debug: Option<usize>,
@@ -214,6 +217,7 @@ struct ArgsBuilder {
     #[serde(deserialize_with = "deserialize_wide_bool", default)]
     append: Option<bool>,
     line: Option<usize>,
+    #[serde(alias = "delim")]
     delimiter: Option<Delimiter>,
     guard: Option<Guard>,
     #[serde(deserialize_with = "deserialize_format", default)]
@@ -233,6 +237,7 @@ struct SubConfigBuilder {
     factor: Option<usize>,
 }
 
+/// Custom deserializer for the string describing the output format
 fn deserialize_format<'de, D>(deserializer: D) -> Result<Option<CrateResult<Vec<Field>>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -262,6 +267,7 @@ where
     deserializer.deserialize_str(FormatVisitor(PhantomData))
 }
 
+/// Custom deserializer for identifying a bool from a wide number of commonly used descriptors
 fn deserialize_wide_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
     D: Deserializer<'de>,
@@ -312,6 +318,7 @@ where
     deserializer.deserialize_any(BoolVisitor(PhantomData))
 }
 
+/// Custom deserializer for the byte multiplier
 fn deserialize_factor<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
 where
     D: Deserializer<'de>,

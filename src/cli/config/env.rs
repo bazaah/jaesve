@@ -18,6 +18,7 @@ use {
     },
 };
 
+/// List of possible variables
 const ENVIRONMENT_VARIABLES: [&str; 11] = [
     "JAESVE_DEBUG",
     "JAESVE_QUIET",
@@ -32,6 +33,7 @@ const ENVIRONMENT_VARIABLES: [&str; 11] = [
     "JAESVE_FACTOR",
 ];
 
+/// Marker for cheap var representation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum Kind {
     Debug,
@@ -66,6 +68,7 @@ impl<S: AsRef<str>> From<S> for Kind {
     }
 }
 
+/// Container for args collected from the environment
 #[derive(Debug, Default)]
 pub(in crate::cli) struct EnvArgs {
     debug: OptDebug,
@@ -202,6 +205,43 @@ impl ConfigMerge for EnvArgs {
     }
 }
 
+/// Environment arg builder, collecting from the selected environment
+#[derive(Debug)]
+pub(in crate::cli) struct Env<E = Live> {
+    environment: E,
+}
+
+impl<E: FromEnv> Env<E> {
+    pub(in crate::cli) fn collect(self) -> EnvArgs {
+        EnvArgs::get_args(self.environment)
+    }
+
+    /// Pass in a custom environment, useful when mocking
+    #[allow(dead_code)]
+    pub(super) fn with_environment(env: E) -> Self {
+        Env { environment: env }
+    }
+}
+
+impl Default for Env {
+    fn default() -> Self {
+        Env { environment: Live }
+    }
+}
+
+/// Controls how Env returns environment variables,
+/// defaulting to the actual program environment
+pub(in crate::cli) trait FromEnv {
+    fn from_env(&self, key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
+        get_env(key.as_ref())
+    }
+}
+
+pub(in crate::cli) struct Live;
+
+impl FromEnv for Live {}
+
+/// Helper for allowing a wide variety of commonly used boolean indicators
 fn parse_wide_bool<S: AsRef<str>>(s: S) -> result::Result<bool, String> {
     match s.as_ref().to_ascii_lowercase().as_str() {
         "true" | "yes" | "1" => Ok(true),
@@ -210,6 +250,8 @@ fn parse_wide_bool<S: AsRef<str>>(s: S) -> result::Result<bool, String> {
     }
 }
 
+/// Helper for parsing byte multiplier indicators, with a fallback to
+/// parsing a number
 fn parse_factor<S: AsRef<str>>(s: S) -> result::Result<usize, String> {
     match s.as_ref() {
         "B" => Ok(1),
@@ -230,38 +272,7 @@ fn log_err<T, E: std::fmt::Display, S: AsRef<str>>(
     }
 }
 
-#[derive(Debug)]
-pub(in crate::cli) struct Env<E = Live> {
-    environment: E,
-}
-
-impl<E: FromEnv> Env<E> {
-    pub(in crate::cli) fn collect(self) -> EnvArgs {
-        EnvArgs::get_args(self.environment)
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn with_environment(env: E) -> Self {
-        Env { environment: env }
-    }
-}
-
-impl Default for Env {
-    fn default() -> Self {
-        Env { environment: Live }
-    }
-}
-
-pub(in crate::cli) trait FromEnv {
-    fn from_env(&self, key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
-        get_env(key.as_ref())
-    }
-}
-
-pub(in crate::cli) struct Live;
-
-impl FromEnv for Live {}
-
+/// Mock environment generator used in tests
 #[derive(Debug, Default)]
 pub(super) struct Mock<'a> {
     map: HashMap<Kind, &'a str>,

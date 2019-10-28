@@ -1,9 +1,6 @@
-use crate::models::{
-    block::{Delimiter, Guard},
-    error::Result,
-    field::Field,
-};
+use super::args::*;
 
+/// Interface for for interacting with the individual arg representation
 pub(in crate::cli) trait ConfigMerge {
     fn merge<T: ConfigMerge>(&mut self, other: T);
 
@@ -13,47 +10,47 @@ pub(in crate::cli) trait ConfigMerge {
         }
     }
 
-    fn debug_level(&mut self) -> Option<usize> {
+    fn debug_level(&mut self) -> OptDebug {
         None
     }
 
-    fn quiet(&mut self) -> Option<bool> {
+    fn quiet(&mut self) -> OptQuiet {
         None
     }
 
-    fn append(&mut self) -> Option<bool> {
+    fn append(&mut self) -> OptAppend {
         None
     }
 
-    fn line(&mut self) -> Option<usize> {
+    fn line(&mut self) -> OptLine {
         None
     }
 
-    fn delimiter(&mut self) -> Option<Delimiter> {
+    fn delimiter(&mut self) -> OptDelim {
         None
     }
 
-    fn guard(&mut self) -> Option<Guard> {
+    fn guard(&mut self) -> OptGuard {
         None
     }
 
-    fn format(&mut self) -> Option<Result<Vec<Field>>> {
+    fn format(&mut self) -> OptFormat {
         None
     }
 
-    fn input_buffer_size(&mut self) -> Option<usize> {
+    fn input_buffer_size(&mut self) -> OptBufIn {
         None
     }
 
-    fn output_buffer_size(&mut self) -> Option<usize> {
+    fn output_buffer_size(&mut self) -> OptBufOut {
         None
     }
 
-    fn linereader_eol(&mut self) -> Option<char> {
+    fn linereader_eol(&mut self) -> OptEOL {
         None
     }
 
-    fn factor(&mut self) -> Option<usize> {
+    fn factor(&mut self) -> OptFactor {
         None
     }
 }

@@ -488,7 +488,6 @@ impl SubConfig {
                     }
                     set
                 });
-                // Unwraps are safe because of default values set + validated by clap
                 let factor = proto.factor(substore);
                 let max_handles = substore
                     .value_of("max_open_file_handles")
