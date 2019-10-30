@@ -44,6 +44,6 @@ itertools = "0.8.0"
 lto = true
 
 [badges]
-azure-devops = { project = "bazaah/jaesve", pipeline = "jaesve" }
+azure-devops = { project = "office0298/office", pipeline = "jaesve" }
 maintenance = { status = "actively-developed" }
 is-it-maintained-open-issues = { repository = "bazaah/jaesve" }
