@@ -60,6 +60,7 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
             .long("line")
             .takes_value(true)
             .default_value("0")
+            .hide_default_value(true)
             .value_name("UINT")
             .validator(|s| match s {
                 ref s => match s.parse::<usize>() {
@@ -69,6 +70,7 @@ pub fn generate_cli<'a, 'b>() -> App<'a, 'b> {
                 }
             )
             .help("Set stdin to read a JSON doc from each line")
+            .long_help("Set stdin to read a JSON doc from each line, and begin processing at line <UNIT>")
         )
         .arg(
             Arg::with_name("delimiter")
