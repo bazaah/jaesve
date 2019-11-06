@@ -24,6 +24,7 @@ stages:
           allow_fail: false
           test_list:
             - "--all"
+            - "--features=config-file"
       - template: rust/test.yml@templates
         parameters:
           rust: nightly
@@ -32,6 +33,7 @@ stages:
           allow_fail: false
           test_list:
             - "--all"
+            - "--features=config-file"
 
 resources:
   repositories:
