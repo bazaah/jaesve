@@ -196,7 +196,7 @@ impl OutputBuilder {
         let mut blocks =
             FnvHashMap::with_capacity_and_hasher(self.blocks.len(), Default::default());
         for opt in &mut self.blocks {
-            opt.take().map(|block| {
+            if let Some(block) = opt.take() {
                 // Hardcoded usizes for keys
                 // If you change these YOU MUST UPDATE the
                 // store_unchecked method AND the get_xx
@@ -224,7 +224,7 @@ impl OutputBuilder {
                         blocks.insert(6, j);
                     }
                 }
-            });
+            };
         }
 
         Output { blocks }
