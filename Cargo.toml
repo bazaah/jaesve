@@ -23,6 +23,7 @@ homepage = "https://github.com/bazaah/jaesve"
 # And expects data to be in TOML format
 config-file = ["serde", "toml", "dirs"]
 
+
 [dependencies]
 serde_json = "1.0.34"
 clap = "2.32.0"
