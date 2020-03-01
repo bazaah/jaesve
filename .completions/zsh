@@ -1,0 +1,71 @@
+#compdef jaesve
+
+zstyle -T ':completion:*:*:jaesve:*' tag-order && \
+   zstyle ':completion:*:*:jaesve:*' tag-order 'subcommands'
+
+_jaesve() {
+  local context state state_descr line
+  typeset -A opt_args
+
+  _arguments \
+    '(- 1 *)'{-h,--help}'[Prints help information]' \
+    '(- 1 *)'{-V,--version}'[Prints version information]' \
+    '-v[Sets level of debug output]' \
+    {-q,--quiet}'[Silences error messages]' \
+    {-a,--append}'[Append to output file, instead of overwriting]' \
+    {-d,--delim=}'[Sets delimiter between output fields]' \
+    {-f,--format=}'[A dot separated list of fields describing how output is formatted]:format string: _values -s . field ident jptr type value jmes' \
+    {-g,--guard=}'[Set field quote character]' \
+    {-l,--line}'[Set stdin to read a JSON doc from each line]' \
+    {-o,--output=}'[Specify an output file path, defaults to stdout]:output file:_files' \
+    {-E,--regex=}'[Set a regex to filter output]' \
+    {-c,--column=}'[Sets column to match regex on]:set column:(ident jptr type value jmes)' \
+    '1: :->command' \
+    '*:: :->args'
+
+case $state in
+    command)
+      _alternative 'subcommands:utility:_subcommands' 'files:filenames:_files'
+      ;;
+
+    args)
+        case $words[1] in
+            config)
+                  _arguments \
+                    '--factor=[Multiplier used by other config args]:set multiplier:(B, K, M)' \
+                    '--linereader_eol=[Set stdin linereader''s EOL character, ignored if --lines is not set]' \
+                    '--buf_in=[Input buffer size multiplied by value of --factor]' \
+                    '--buf_out=[Output buffer size multiplied by value of --factor]' \
+                    '--log_to=[Log file paths with a - representing stderr]:log files:_files' \
+                    '--file_limit=[Maximum number of open file handles]' \
+                    ;;
+
+            completions)
+                  _arguments \
+                    '(-h, --help)'{-h,--help}'[Print help message]' \
+                    ':: :_files' \
+                    ':choose shell:(bash zsh fish)'
+                    ;;
+
+            help)
+                  _arguments \
+                    '(-h, --help)'{-h,--help}'[Print help message]' \
+                    '*: :_subcommands' \
+                    ;;
+    esac
+    ;;
+esac
+
+
+}
+
+_subcommands(){
+local -a commands;commands=(
+'help:Print help information or the help of a given subcommand'
+'config:Configure various program intrinsics'
+'completions:Autocompletion script generator'
+)
+_describe -t subcommands 'utility commands' commands
+}
+
+compdef _jaesve jaesve

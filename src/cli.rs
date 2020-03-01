@@ -19,6 +19,10 @@ use {
 mod config;
 mod deptree;
 
+mod completions {
+    pub static ZSH_CUSTOM_COMPLETIONS: &[u8] = include_bytes!("../.completions/zsh.gz");
+}
+
 // Subset of all Field variants that can be used for valuable output
 const VALID_FIELDS: [Field; 5] = [
     Field::Identifier,
@@ -404,41 +408,55 @@ impl<'a, 'b> ProgramArgs {
     /// Checks if the 'completion' subcommand is active
     /// if it is, generate completion script and exit
     fn if_completions_exit(subcommand: Option<&Matches<'a>>) {
-        use std::{fs::File, io::stdout as cout, io::Write as ioWrite};
+        use std::{fs::File, io::stdout, io::Write as ioWrite};
         let writer = |path: Option<&str>| -> (Box<dyn ioWrite>, i32) {
             match path {
                 Some(path) => match File::create(path) {
                     Ok(file) => (Box::from(file), 0),
                     // Return exit status 1 to indicate an error
-                    Err(_) => (Box::from(cout()), 1),
+                    Err(_) => (Box::from(stdout()), 1),
                 },
-                None => (Box::from(cout()), 0),
+                None => (Box::from(stdout()), 0),
             }
         };
 
         if let Some(sub_store) = subcommand {
-            sub_store
-                .value_of("completions_file")
-                .and_then(|path| {
-                    let mut writer = writer(Some(path));
-                    generate_cli().gen_completions_to(
-                        "jaesve",
-                        sub_store.value_of("shell").unwrap().parse().unwrap(),
-                        &mut writer.0,
-                    );
-                    Some(writer.1)
-                })
-                .or_else(|| {
-                    let mut writer = writer(None);
-                    generate_cli().gen_completions_to(
-                        "jaesve",
-                        sub_store.value_of("shell").unwrap().parse().unwrap(),
-                        &mut writer.0,
-                    );
-                    Some(writer.1)
-                })
-                .map(|code| std::process::exit(code))
-                .unwrap()
+            let (output, code) = writer(sub_store.value_of("completions_file"));
+            let shell = sub_store.value_of("shell");
+
+            match (output, shell) {
+                // Clap requires a 'shell' arg
+                (_, None) => unreachable!(),
+                // Use hand rolled zsh completions
+                (ref mut writer, Some(shell)) if shell == "zsh" => {
+                    use {self::completions::ZSH_CUSTOM_COMPLETIONS, flate2::write::GzDecoder};
+
+                    let mut decoder = GzDecoder::new(Vec::new());
+                    match decoder
+                        .write_all(ZSH_CUSTOM_COMPLETIONS)
+                        .and_then(|_| decoder.finish())
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+                        .and_then(|w| {
+                            String::from_utf8(w)
+                                .map(|comp| {
+                                    write!(writer, "{}", comp)
+                                        .unwrap_or_else(|_| print!("{}", comp))
+                                })
+                                .map_err(|e| e.into())
+                        }) {
+                        Ok(()) => std::process::exit(code),
+                        Err(e) => {
+                            eprintln!("{}", e);
+                            std::process::exit(1)
+                        }
+                    }
+                }
+                // Else use clap's auto generated completions
+                (ref mut writer, Some(shell)) => {
+                    generate_cli().gen_completions_to("jaesve", shell.parse().unwrap(), writer);
+                    std::process::exit(code)
+                }
+            }
         }
     }
 
