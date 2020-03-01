@@ -290,7 +290,7 @@ impl<'a> FromEnv for Mock<'a> {
     fn from_env(&self, key: &dyn AsRef<OsStr>) -> result::Result<String, VarError> {
         self.map
             .get(&Kind::from(key.as_ref().to_str().unwrap()))
-            .map(|s| Ok(s.to_string()))
+            .map(|s| Ok((*s).to_string()))
             .unwrap_or(Err(VarError::NotPresent))
     }
 }
@@ -309,7 +309,7 @@ mod tests {
         ( $( $key:expr, $val:expr ),* ) => {{
             let iter = [ $( ($key, $val) )* ];
 
-            let mock: Mock = iter.into_iter().cloned().collect();
+            let mock: Mock = iter.iter().cloned().collect();
 
             Env::with_environment(mock).collect()
         }}
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn arg_quiet_true() {
-        for arg in ALLOWED_TRUE.into_iter() {
+        for arg in ALLOWED_TRUE.iter() {
             let mut data = mock!(Kind::Quiet, *arg);
 
             assert_eq!(data.quiet(), Some(true));
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn arg_quiet_false() {
-        for arg in ALLOWED_FALSE.into_iter() {
+        for arg in ALLOWED_FALSE.iter() {
             let mut data = mock!(Kind::Quiet, *arg);
 
             assert_eq!(data.quiet(), Some(false));
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn arg_append_true() {
-        for arg in ALLOWED_TRUE.into_iter() {
+        for arg in ALLOWED_TRUE.iter() {
             let mut data = mock!(Kind::Append, *arg);
 
             assert_eq!(data.append(), Some(true));
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn arg_append_false() {
-        for arg in ALLOWED_FALSE.into_iter() {
+        for arg in ALLOWED_FALSE.iter() {
             let mut data = mock!(Kind::Append, *arg);
 
             assert_eq!(data.append(), Some(false));

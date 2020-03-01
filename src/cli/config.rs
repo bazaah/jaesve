@@ -286,7 +286,7 @@ mod tests {
     macro_rules! mock {
         (env $( $ek:expr, $ev:expr ),* ;file $fkv:expr) => {{
             #[allow(unused_mut)]
-            let mut env = Env::with_environment([ $( ($ek, $ev) )* ].into_iter().cloned().collect::<Mock>()).collect();
+            let mut env = Env::with_environment([ $( ($ek, $ev) )* ].iter().cloned().collect::<Mock>()).collect();
 
             #[cfg(feature = "config-file")]
             {

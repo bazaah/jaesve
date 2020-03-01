@@ -630,11 +630,7 @@ mod tests {
             .map(|outer| {
                 let fmt = outer
                     .iter()
-                    .map(|f| {
-                        let whatever = *f.clone();
-                        let col: &str = whatever.into();
-                        col
-                    })
+                    .map(|field| -> &str { (**field).into() })
                     .collect::<Vec<&str>>();
                 fmt.join(".")
             })
@@ -766,9 +762,8 @@ mod tests {
 
     #[test]
     fn possible_subcommand_opt_factor() {
-        for id in &["B", "K", "M"] {
-            let mult: &str = id.clone().into();
-            let app = test_cli!().get_matches_from_safe(&["config", "--factor", mult]);
+        for &id in &["B", "K", "M"] {
+            let app = test_cli!().get_matches_from_safe(&["config", "--factor", id]);
             assert!(app.is_ok());
         }
     }
